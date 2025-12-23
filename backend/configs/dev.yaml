@@ -1,0 +1,33 @@
+server:
+  port: "15080"
+  mode: debug
+
+sqlite:
+  path: ./data/zeni-x.db
+
+mysql:
+  host: 192.168.50.154
+  port: 30306
+  user: root
+  password: ""  # 从环境变量 MYSQL_ROOT_PASSWORD 读取
+  database: ""
+
+redis:
+  host: 192.168.50.154
+  port: 30379
+  password: ""  # 从环境变量 REDIS_PASSWORD 读取
+  db: 0
+
+mongodb:
+  host: 192.168.50.154
+  port: 30017
+  user: admin
+  password: ""
+  database: ""
+
+minio:
+  endpoint: 192.168.50.154:30900
+  access_key: minioadmin
+  secret_key: ""
+  use_ssl: false
+

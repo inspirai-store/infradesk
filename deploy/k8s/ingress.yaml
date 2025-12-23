@@ -1,0 +1,27 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zeni-x-ingress
+  namespace: zeni-x
+  annotations:
+    kubernetes.io/ingress.class: traefik
+spec:
+  rules:
+  - host: zeni-x.inner.inspirai.store
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: zeni-x
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: zeni-x
+            port:
+              number: 8080
+

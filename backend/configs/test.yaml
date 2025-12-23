@@ -1,0 +1,33 @@
+server:
+  port: "8080"
+  mode: release
+
+sqlite:
+  path: /data/zeni-x.db
+
+mysql:
+  host: mysql.dev-services.svc.cluster.local
+  port: 3306
+  user: root
+  password: ""
+  database: ""
+
+redis:
+  host: redis.dev-services.svc.cluster.local
+  port: 6379
+  password: ""
+  db: 0
+
+mongodb:
+  host: mongodb.dev-services.svc.cluster.local
+  port: 27017
+  user: admin
+  password: ""
+  database: ""
+
+minio:
+  endpoint: minio-api.dev-services.svc.cluster.local:9000
+  access_key: minioadmin
+  secret_key: ""
+  use_ssl: false
+

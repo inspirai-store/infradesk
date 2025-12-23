@@ -1,0 +1,243 @@
+/* Zeni-X Global Styles - Cyberpunk Theme - 紧凑版 */
+
+:root {
+  --zx-bg-primary: #0a0a1a;
+  --zx-bg-secondary: #12122a;
+  --zx-bg-tertiary: #1a1a3a;
+  --zx-accent-cyan: #00FFFF;
+  --zx-accent-magenta: #FF00FF;
+  --zx-accent-purple: #8B5CF6;
+  --zx-text-primary: #E2E8F0;
+  --zx-text-secondary: #94A3B8;
+  --zx-border: rgba(0, 255, 255, 0.2);
+  --zx-glow: 0 0 15px rgba(0, 255, 255, 0.2);
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  font-family: 'JetBrains Mono', -apple-system, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-size: 13px;
+  background: var(--zx-bg-primary);
+  color: var(--zx-text-primary);
+  min-height: 100vh;
+  line-height: 1.5;
+}
+
+/* Custom Scrollbar - 更细 */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--zx-bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--zx-accent-cyan);
+  border-radius: 3px;
+  opacity: 0.5;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--zx-accent-magenta);
+}
+
+/* Grid Background */
+.grid-bg {
+  background-image: 
+    linear-gradient(rgba(0, 255, 255, 0.02) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0, 255, 255, 0.02) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+/* Glassmorphism Card - 圆角减小 */
+.glass-card {
+  background: rgba(18, 18, 42, 0.8);
+  backdrop-filter: blur(10px);
+  border: 1px solid var(--zx-border);
+  border-radius: 8px;
+  box-shadow: var(--zx-glow);
+}
+
+/* Neon Text */
+.neon-text {
+  color: var(--zx-accent-cyan);
+  text-shadow: 
+    0 0 5px var(--zx-accent-cyan),
+    0 0 10px var(--zx-accent-cyan);
+}
+
+.neon-text-magenta {
+  color: var(--zx-accent-magenta);
+  text-shadow: 
+    0 0 5px var(--zx-accent-magenta),
+    0 0 10px var(--zx-accent-magenta);
+}
+
+/* Title Font */
+.title-font {
+  font-family: 'Orbitron', sans-serif;
+}
+
+/* Animations */
+@keyframes pulse-glow {
+  0%, 100% {
+    box-shadow: 0 0 5px var(--zx-accent-cyan), 0 0 10px var(--zx-accent-cyan);
+  }
+  50% {
+    box-shadow: 0 0 10px var(--zx-accent-cyan), 0 0 20px var(--zx-accent-cyan);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+/* Status Colors */
+.status-connected {
+  color: #22C55E;
+}
+
+.status-disconnected {
+  color: #EF4444;
+}
+
+.status-warning {
+  color: #F59E0B;
+}
+
+/* Code Editor Styles - 更紧凑 */
+.code-editor {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+/* Data Table Enhancements - 紧凑 */
+.n-data-table {
+  --n-th-color: var(--zx-bg-tertiary) !important;
+  --n-td-color: var(--zx-bg-secondary) !important;
+  font-size: 12px;
+}
+
+.n-data-table .n-data-table-th {
+  padding: 8px 12px !important;
+}
+
+.n-data-table .n-data-table-td {
+  padding: 6px 12px !important;
+}
+
+/* Button Glow Effect */
+.n-button--primary-type:hover {
+  box-shadow: 0 0 12px var(--zx-accent-cyan);
+}
+
+/* Sidebar Styles */
+.sidebar-item {
+  transition: all 0.2s ease;
+  border-left: 2px solid transparent;
+}
+
+.sidebar-item:hover {
+  background: rgba(0, 255, 255, 0.1);
+  border-left-color: var(--zx-accent-cyan);
+}
+
+.sidebar-item.active {
+  background: rgba(0, 255, 255, 0.15);
+  border-left-color: var(--zx-accent-cyan);
+}
+
+/* Input Focus Glow */
+.n-input:focus-within {
+  box-shadow: 0 0 0 2px rgba(0, 255, 255, 0.2) !important;
+}
+
+/* Card 紧凑化 */
+.n-card {
+  --n-padding-top: 12px !important;
+  --n-padding-bottom: 12px !important;
+  --n-padding-left: 14px !important;
+  --n-padding-right: 14px !important;
+}
+
+.n-card-header {
+  padding: 10px 14px !important;
+}
+
+/* Form 紧凑化 */
+.n-form-item {
+  margin-bottom: 12px !important;
+}
+
+.n-form-item-label {
+  font-size: 12px !important;
+}
+
+/* Tag 紧凑化 */
+.n-tag {
+  font-size: 11px !important;
+}
+
+/* Statistic 紧凑化 */
+.n-statistic .n-statistic-label {
+  font-size: 11px !important;
+}
+
+.n-statistic .n-statistic-value {
+  font-size: 14px !important;
+}
+
+/* Modal 紧凑化 */
+.n-modal .n-card-header {
+  padding: 12px 16px !important;
+}
+
+/* Loading Spinner */
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 2px solid var(--zx-bg-tertiary);
+  border-top-color: var(--zx-accent-cyan);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Breadcrumb 紧凑 */
+.n-breadcrumb {
+  font-size: 12px !important;
+}
+
+/* Menu 紧凑 */
+.n-menu-item {
+  height: 36px !important;
+}
+
+/* Pagination 紧凑 */
+.n-pagination {
+  font-size: 12px !important;
+}
