@@ -13,6 +13,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/connections/ConnectionsView.vue'),
   },
   {
+    path: '/port-forward',
+    name: 'PortForward',
+    component: () => import('@/views/PortForwardView.vue'),
+  },
+  {
     path: '/mysql',
     name: 'MySQL',
     component: () => import('@/views/mysql/MySQLView.vue'),

@@ -54,6 +54,19 @@ func (s *SQLite) DB() *sql.DB {
 // initTables 初始化表结构
 func (s *SQLite) initTables() error {
 	schema := `
+	-- 集群信息表
+	CREATE TABLE IF NOT EXISTS clusters (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		name TEXT NOT NULL UNIQUE,
+		description TEXT,
+		environment TEXT,
+		context TEXT,
+		api_server TEXT,
+		is_active BOOLEAN DEFAULT 1,
+		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	-- 连接配置（预留多连接支持）
 	CREATE TABLE IF NOT EXISTS connections (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,8 +78,14 @@ func (s *SQLite) initTables() error {
 		password TEXT,
 		database_name TEXT,
 		is_default BOOLEAN DEFAULT 0,
+		forward_id TEXT,
+		forward_local_port INTEGER,
+		forward_status TEXT,
+		cluster_id INTEGER,
+		source TEXT DEFAULT 'local',
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		FOREIGN KEY (cluster_id) REFERENCES clusters(id) ON DELETE SET NULL
 	);
 
 	-- SQL 查询历史
@@ -95,25 +114,69 @@ func (s *SQLite) initTables() error {
 	CREATE INDEX IF NOT EXISTS idx_query_history_type ON query_history(query_type);
 	CREATE INDEX IF NOT EXISTS idx_query_history_executed_at ON query_history(executed_at);
 	CREATE INDEX IF NOT EXISTS idx_connections_type ON connections(type);
+	CREATE INDEX IF NOT EXISTS idx_connections_cluster ON connections(cluster_id);
+	CREATE INDEX IF NOT EXISTS idx_connections_source ON connections(source);
 	`
 
 	_, err := s.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+
+	// 迁移：添加端口转发字段到现有数据库
+	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN forward_id TEXT`)
+	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN forward_local_port INTEGER`)
+	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN forward_status TEXT`)
+	
+	// 迁移：添加 K8s 相关字段
+	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN k8s_namespace TEXT`)
+	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN k8s_service_name TEXT`)
+	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN k8s_service_port INTEGER`)
+	
+	// 迁移：添加集群和来源字段
+	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN cluster_id INTEGER`)
+	_, _ = s.db.Exec(`ALTER TABLE connections ADD COLUMN source TEXT DEFAULT 'local'`)
+	
+	// 为已存在的 NULL source 设置默认值
+	_, _ = s.db.Exec(`UPDATE connections SET source = 'local' WHERE source IS NULL`)
+
+	return nil
 }
 
 // Connection 连接配置
 type Connection struct {
-	ID           int64  `json:"id"`
-	Name         string `json:"name"`
-	Type         string `json:"type"`
-	Host         string `json:"host"`
-	Port         int    `json:"port"`
-	Username     string `json:"username,omitempty"`
-	Password     string `json:"password,omitempty"` // 允许接收密码，但在返回时需要手动清空
-	DatabaseName string `json:"database_name,omitempty"`
-	IsDefault    bool   `json:"is_default"`
-	CreatedAt    string `json:"created_at"`
-	UpdatedAt    string `json:"updated_at"`
+	ID               int64   `json:"id"`
+	Name             string  `json:"name"`
+	Type             string  `json:"type"`
+	Host             string  `json:"host"`
+	Port             int     `json:"port"`
+	Username         string  `json:"username,omitempty"`
+	Password         string  `json:"password,omitempty"` // 允许接收密码，但在返回时需要手动清空
+	DatabaseName     string  `json:"database_name,omitempty"`
+	IsDefault        bool    `json:"is_default"`
+	ForwardID        string  `json:"forward_id,omitempty"`
+	ForwardLocalPort int     `json:"forward_local_port,omitempty"`
+	ForwardStatus    string  `json:"forward_status,omitempty"`
+	K8sNamespace     string  `json:"k8s_namespace,omitempty"`    // K8s 命名空间
+	K8sServiceName   string  `json:"k8s_service_name,omitempty"` // K8s 服务名
+	K8sServicePort   int     `json:"k8s_service_port,omitempty"` // K8s 服务端口
+	ClusterID        *int64  `json:"cluster_id,omitempty"`       // 所属集群ID（nullable）
+	Source           string  `json:"source"`                     // 来源: local, k8s
+	CreatedAt        string  `json:"created_at"`
+	UpdatedAt        string  `json:"updated_at"`
+}
+
+// Cluster 集群信息
+type Cluster struct {
+	ID          int64  `json:"id"`
+	Name        string `json:"name"`                   // 集群名称
+	Description string `json:"description,omitempty"`  // 集群描述
+	Environment string `json:"environment,omitempty"`  // 环境: dev, test, uat, prod
+	Context     string `json:"context,omitempty"`      // K8s context
+	APIServer   string `json:"api_server,omitempty"`   // K8s API Server 地址
+	IsActive    bool   `json:"is_active"`              // 是否激活
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
 }
 
 // QueryHistory 查询历史
@@ -139,7 +202,11 @@ type SavedQuery struct {
 // GetConnections 获取所有连接配置
 func (s *SQLite) GetConnections() ([]Connection, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, type, host, port, username, database_name, is_default, created_at, updated_at 
+		SELECT id, name, type, host, port, username, database_name, is_default, 
+		       COALESCE(forward_id, ''), COALESCE(forward_local_port, 0), COALESCE(forward_status, ''),
+		       COALESCE(k8s_namespace, ''), COALESCE(k8s_service_name, ''), COALESCE(k8s_service_port, 0),
+		       cluster_id, COALESCE(source, 'local'),
+		       created_at, updated_at 
 		FROM connections ORDER BY created_at DESC
 	`)
 	if err != nil {
@@ -151,7 +218,11 @@ func (s *SQLite) GetConnections() ([]Connection, error) {
 	for rows.Next() {
 		var c Connection
 		var username, dbName sql.NullString
-		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &username, &dbName, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &username, &dbName, &c.IsDefault,
+			&c.ForwardID, &c.ForwardLocalPort, &c.ForwardStatus,
+			&c.K8sNamespace, &c.K8sServiceName, &c.K8sServicePort,
+			&c.ClusterID, &c.Source,
+			&c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Username = username.String
@@ -164,10 +235,21 @@ func (s *SQLite) GetConnections() ([]Connection, error) {
 
 // CreateConnection 创建连接配置
 func (s *SQLite) CreateConnection(c *Connection) error {
+	// 如果 source 为空，默认设置为 local
+	if c.Source == "" {
+		c.Source = "local"
+	}
+	
 	result, err := s.db.Exec(`
-		INSERT INTO connections (name, type, host, port, username, password, database_name, is_default)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-	`, c.Name, c.Type, c.Host, c.Port, c.Username, c.Password, c.DatabaseName, c.IsDefault)
+		INSERT INTO connections (name, type, host, port, username, password, database_name, is_default,
+		                        forward_id, forward_local_port, forward_status,
+		                        k8s_namespace, k8s_service_name, k8s_service_port,
+		                        cluster_id, source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, c.Name, c.Type, c.Host, c.Port, c.Username, c.Password, c.DatabaseName, c.IsDefault,
+		c.ForwardID, c.ForwardLocalPort, c.ForwardStatus,
+		c.K8sNamespace, c.K8sServiceName, c.K8sServicePort,
+		c.ClusterID, c.Source)
 	if err != nil {
 		return err
 	}
@@ -277,9 +359,17 @@ func (s *SQLite) GetConnectionByID(id int64) (*Connection, error) {
 	var c Connection
 	var username, password, dbName sql.NullString
 	err := s.db.QueryRow(`
-		SELECT id, name, type, host, port, username, password, database_name, is_default, created_at, updated_at 
+		SELECT id, name, type, host, port, username, password, database_name, is_default,
+		       COALESCE(forward_id, ''), COALESCE(forward_local_port, 0), COALESCE(forward_status, ''),
+		       COALESCE(k8s_namespace, ''), COALESCE(k8s_service_name, ''), COALESCE(k8s_service_port, 0),
+		       cluster_id, COALESCE(source, 'local'),
+		       created_at, updated_at 
 		FROM connections WHERE id = ?
-	`, id).Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &username, &password, &dbName, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt)
+	`, id).Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &username, &password, &dbName, &c.IsDefault,
+		&c.ForwardID, &c.ForwardLocalPort, &c.ForwardStatus,
+		&c.K8sNamespace, &c.K8sServiceName, &c.K8sServicePort,
+		&c.ClusterID, &c.Source,
+		&c.CreatedAt, &c.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -293,9 +383,17 @@ func (s *SQLite) GetConnectionByID(id int64) (*Connection, error) {
 func (s *SQLite) UpdateConnection(c *Connection) error {
 	_, err := s.db.Exec(`
 		UPDATE connections 
-		SET name = ?, type = ?, host = ?, port = ?, username = ?, password = ?, database_name = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
+		SET name = ?, type = ?, host = ?, port = ?, username = ?, password = ?, database_name = ?, is_default = ?,
+		    forward_id = ?, forward_local_port = ?, forward_status = ?,
+		    k8s_namespace = ?, k8s_service_name = ?, k8s_service_port = ?,
+		    cluster_id = ?, source = ?,
+		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
-	`, c.Name, c.Type, c.Host, c.Port, c.Username, c.Password, c.DatabaseName, c.IsDefault, c.ID)
+	`, c.Name, c.Type, c.Host, c.Port, c.Username, c.Password, c.DatabaseName, c.IsDefault,
+		c.ForwardID, c.ForwardLocalPort, c.ForwardStatus,
+		c.K8sNamespace, c.K8sServiceName, c.K8sServicePort,
+		c.ClusterID, c.Source,
+		c.ID)
 	return err
 }
 
@@ -308,7 +406,11 @@ func (s *SQLite) DeleteConnection(id int64) error {
 // GetConnectionsByType 按类型获取连接配置列表
 func (s *SQLite) GetConnectionsByType(connType string) ([]Connection, error) {
 	rows, err := s.db.Query(`
-		SELECT id, name, type, host, port, username, database_name, is_default, created_at, updated_at 
+		SELECT id, name, type, host, port, username, database_name, is_default,
+		       COALESCE(forward_id, ''), COALESCE(forward_local_port, 0), COALESCE(forward_status, ''),
+		       COALESCE(k8s_namespace, ''), COALESCE(k8s_service_name, ''), COALESCE(k8s_service_port, 0),
+		       cluster_id, COALESCE(source, 'local'),
+		       created_at, updated_at 
 		FROM connections WHERE type = ? ORDER BY created_at DESC
 	`, connType)
 	if err != nil {
@@ -320,7 +422,11 @@ func (s *SQLite) GetConnectionsByType(connType string) ([]Connection, error) {
 	for rows.Next() {
 		var c Connection
 		var username, dbName sql.NullString
-		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &username, &dbName, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt); err != nil {
+		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &username, &dbName, &c.IsDefault,
+			&c.ForwardID, &c.ForwardLocalPort, &c.ForwardStatus,
+			&c.K8sNamespace, &c.K8sServiceName, &c.K8sServicePort,
+			&c.ClusterID, &c.Source,
+			&c.CreatedAt, &c.UpdatedAt); err != nil {
 			return nil, err
 		}
 		c.Username = username.String
@@ -331,3 +437,135 @@ func (s *SQLite) GetConnectionsByType(connType string) ([]Connection, error) {
 	return connections, nil
 }
 
+// ==================== Cluster Management ====================
+
+// GetClusters 获取所有集群
+func (s *SQLite) GetClusters() ([]Cluster, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, COALESCE(description, ''), COALESCE(environment, ''), 
+		       COALESCE(context, ''), COALESCE(api_server, ''), is_active, 
+		       created_at, updated_at 
+		FROM clusters ORDER BY created_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var clusters []Cluster
+	for rows.Next() {
+		var c Cluster
+		if err := rows.Scan(&c.ID, &c.Name, &c.Description, &c.Environment,
+			&c.Context, &c.APIServer, &c.IsActive,
+			&c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		clusters = append(clusters, c)
+	}
+
+	return clusters, nil
+}
+
+// GetClusterByID 根据 ID 获取集群
+func (s *SQLite) GetClusterByID(id int64) (*Cluster, error) {
+	var c Cluster
+	err := s.db.QueryRow(`
+		SELECT id, name, COALESCE(description, ''), COALESCE(environment, ''), 
+		       COALESCE(context, ''), COALESCE(api_server, ''), is_active,
+		       created_at, updated_at 
+		FROM clusters WHERE id = ?
+	`, id).Scan(&c.ID, &c.Name, &c.Description, &c.Environment,
+		&c.Context, &c.APIServer, &c.IsActive,
+		&c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// GetClusterByName 根据名称获取集群
+func (s *SQLite) GetClusterByName(name string) (*Cluster, error) {
+	var c Cluster
+	err := s.db.QueryRow(`
+		SELECT id, name, COALESCE(description, ''), COALESCE(environment, ''), 
+		       COALESCE(context, ''), COALESCE(api_server, ''), is_active,
+		       created_at, updated_at 
+		FROM clusters WHERE name = ?
+	`, name).Scan(&c.ID, &c.Name, &c.Description, &c.Environment,
+		&c.Context, &c.APIServer, &c.IsActive,
+		&c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// CreateCluster 创建集群
+func (s *SQLite) CreateCluster(c *Cluster) error {
+	result, err := s.db.Exec(`
+		INSERT INTO clusters (name, description, environment, context, api_server, is_active)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, c.Name, c.Description, c.Environment, c.Context, c.APIServer, c.IsActive)
+	if err != nil {
+		return err
+	}
+
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	c.ID = id
+
+	return nil
+}
+
+// UpdateCluster 更新集群
+func (s *SQLite) UpdateCluster(c *Cluster) error {
+	_, err := s.db.Exec(`
+		UPDATE clusters 
+		SET name = ?, description = ?, environment = ?, context = ?, api_server = ?, is_active = ?,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, c.Name, c.Description, c.Environment, c.Context, c.APIServer, c.IsActive, c.ID)
+	return err
+}
+
+// DeleteCluster 删除集群（会将关联的连接的 cluster_id 设置为 NULL）
+func (s *SQLite) DeleteCluster(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM clusters WHERE id = ?`, id)
+	return err
+}
+
+// GetConnectionsByCluster 获取集群下的所有连接
+func (s *SQLite) GetConnectionsByCluster(clusterID int64) ([]Connection, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, type, host, port, username, database_name, is_default,
+		       COALESCE(forward_id, ''), COALESCE(forward_local_port, 0), COALESCE(forward_status, ''),
+		       COALESCE(k8s_namespace, ''), COALESCE(k8s_service_name, ''), COALESCE(k8s_service_port, 0),
+		       cluster_id, COALESCE(source, 'local'),
+		       created_at, updated_at 
+		FROM connections WHERE cluster_id = ? ORDER BY created_at DESC
+	`, clusterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var connections []Connection
+	for rows.Next() {
+		var c Connection
+		var username, dbName sql.NullString
+		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &username, &dbName, &c.IsDefault,
+			&c.ForwardID, &c.ForwardLocalPort, &c.ForwardStatus,
+			&c.K8sNamespace, &c.K8sServiceName, &c.K8sServicePort,
+			&c.ClusterID, &c.Source,
+			&c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		c.Username = username.String
+		c.DatabaseName = dbName.String
+		connections = append(connections, c)
+	}
+
+	return connections, nil
+}

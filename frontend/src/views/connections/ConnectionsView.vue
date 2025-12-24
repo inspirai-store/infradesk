@@ -29,8 +29,11 @@ import {
   FlashOutline,
   CheckmarkCircleOutline,
   CloseCircleOutline,
+  SearchOutline,
 } from '@vicons/ionicons5'
 import { useConnectionsStore } from '@/stores/connections'
+import ServiceDiscovery from '@/components/ServiceDiscovery.vue'
+import PortForwardStatus from '@/components/PortForwardStatus.vue'
 import type { Connection } from '@/api'
 
 const store = useConnectionsStore()
@@ -38,6 +41,7 @@ const message = useMessage()
 
 // Modal state
 const showModal = ref(false)
+const showDiscovery = ref(false)
 const isEditing = ref(false)
 const formRef = ref()
 const testing = ref(false)
@@ -202,6 +206,11 @@ function setActive(conn: Connection) {
   }
 }
 
+function handleImported(count: number) {
+  // 重新加载连接列表
+  store.fetchConnections()
+}
+
 onMounted(() => {
   store.initFromStorage()
   store.fetchConnections()
@@ -217,12 +226,26 @@ onMounted(() => {
           <h1 class="title-font neon-text">连接管理</h1>
           <p class="subtitle">管理数据库连接配置</p>
         </div>
-        <NButton type="primary" @click="openAddModal()">
-          <template #icon>
-            <NIcon><AddOutline /></NIcon>
-          </template>
-          新建连接
-        </NButton>
+        <NSpace>
+          <NButton type="info" @click="showDiscovery = true">
+            <template #icon>
+              <NIcon><SearchOutline /></NIcon>
+            </template>
+            自动发现
+          </NButton>
+          <NButton type="default" @click="$router.push('/port-forward')">
+            <template #icon>
+              <NIcon><FlashOutline /></NIcon>
+            </template>
+            端口转发
+          </NButton>
+          <NButton type="primary" @click="openAddModal()">
+            <template #icon>
+              <NIcon><AddOutline /></NIcon>
+            </template>
+            新建连接
+          </NButton>
+        </NSpace>
       </NSpace>
     </div>
 
@@ -261,9 +284,22 @@ onMounted(() => {
                   </NSpace>
                 </NSpace>
                 
+                <!-- 端口转发状态 -->
+                <PortForwardStatus
+                  v-if="conn.id && conn.forward_id"
+                  :connection-id="conn.id"
+                  :auto-refresh="true"
+                  :refresh-interval="10000"
+                />
+                
                 <div class="conn-info">
-                  <span>{{ conn.host }}:{{ conn.port }}</span>
-                  <span v-if="conn.username"> · {{ conn.username }}</span>
+                  <template v-if="conn.forward_local_port">
+                    localhost:{{ conn.forward_local_port }} → {{ conn.host }}:{{ conn.port }}
+                  </template>
+                  <template v-else>
+                    <span>{{ conn.host }}:{{ conn.port }}</span>
+                    <span v-if="conn.username"> · {{ conn.username }}</span>
+                  </template>
                 </div>
 
                 <NSpace :size="8">
@@ -402,6 +438,12 @@ onMounted(() => {
         </NSpace>
       </template>
     </NModal>
+
+    <!-- Service Discovery Modal -->
+    <ServiceDiscovery 
+      v-model:show="showDiscovery" 
+      @imported="handleImported"
+    />
   </div>
 </template>
 

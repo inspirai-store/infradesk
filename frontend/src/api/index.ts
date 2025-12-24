@@ -161,6 +161,60 @@ export const systemApi = {
   deleteSavedQuery: (id: number) => api.delete(`/saved-queries/${id}`),
 }
 
+// ==================== K8s Service Discovery API ====================
+export const k8sApi = {
+  // Discover middleware services in Kubernetes cluster
+  // Note: This may take a while in large clusters, using 60s timeout
+  // Can provide kubeconfig content and context for discovery
+  discover: (kubeconfig?: string, context?: string, signal?: AbortSignal) => 
+    api.post<DiscoveredService[]>('/k8s/discover', { kubeconfig, context }, { 
+      timeout: 60000,
+      signal 
+    }),
+  
+  // List clusters from kubeconfig
+  listClusters: (kubeconfig: string) =>
+    api.post<{ clusters: string[] }>('/k8s/clusters', { kubeconfig }),
+  
+  // Batch import discovered services as connections
+  importConnections: (services: DiscoveredService[], forceOverride?: boolean) => 
+    api.post<ImportConnectionsResponse>('/k8s/import', { 
+      services,
+      force_override: forceOverride || false 
+    }),
+}
+
+// ==================== Port Forward API ====================
+export const portForwardApi = {
+  // Create port forward
+  create: (connectionId: number, namespace: string, serviceName: string, remotePort: number) =>
+    api.post<ForwardInfo>('/port-forward', {
+      connection_id: connectionId,
+      namespace,
+      service_name: serviceName,
+      remote_port: remotePort,
+    }),
+  
+  // List all forwards
+  list: () => api.get<ForwardListResponse>('/port-forward'),
+  
+  // Get single forward status
+  get: (id: string) => api.get<ForwardInfo>(`/port-forward/${id}`),
+  
+  // Get forward by connection ID
+  getByConnection: (connectionId: number) => 
+    api.get<ForwardInfo>(`/port-forward/by-connection`, { params: { connection_id: connectionId } }),
+  
+  // Stop forward
+  stop: (id: string) => api.delete(`/port-forward/${id}`),
+  
+  // Reconnect forward
+  reconnect: (id: string) => api.post<ForwardInfo>(`/port-forward/${id}/reconnect`),
+  
+  // Update last used time
+  touch: (id: string) => api.put(`/port-forward/${id}/touch`),
+}
+
 // ==================== Types ====================
 export interface CreateTableRequest {
   name: string
@@ -220,6 +274,9 @@ export interface Connection {
   password?: string
   database_name?: string
   is_default?: boolean
+  forward_id?: string
+  forward_local_port?: number
+  forward_status?: 'active' | 'error' | 'idle'
   created_at?: string
   updated_at?: string
 }
@@ -236,3 +293,53 @@ export interface SavedQuery {
   name: string
   query_text: string
 }
+
+// ==================== K8s Service Discovery Types ====================
+export interface DiscoveredService {
+  name: string
+  type: 'mysql' | 'redis' | 'mongodb' | 'minio' | 'postgresql'
+  namespace: string
+  host: string
+  port: number
+  username?: string
+  password?: string
+  database?: string
+  has_credentials: boolean
+}
+
+export interface ImportConnectionsResponse {
+  success: number
+  failed: number
+  updated: number
+  skipped: number
+  results: ImportConnectionResult[]
+}
+
+export interface ImportConnectionResult {
+  name: string
+  success: boolean
+  updated?: boolean
+  skipped?: boolean
+  error?: string
+  id?: number
+}
+
+// ==================== Port Forward Types ====================
+export interface ForwardInfo {
+  id: string
+  connection_id: number
+  local_host: string
+  local_port: number
+  remote_host: string
+  remote_port: number
+  status: 'active' | 'error' | 'idle'
+  created_at: string
+  last_used_at: string
+  error_message?: string
+}
+
+export interface ForwardListResponse {
+  forwards: ForwardInfo[]
+  total: number
+}
+

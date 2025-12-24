@@ -1,27 +1,36 @@
 package api
 
 import (
+	"context"
+	"fmt"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/zeni-x/backend/internal/k8s"
 	"github.com/zeni-x/backend/internal/service"
 	"github.com/zeni-x/backend/internal/store"
 )
 
 // MySQLHandler MySQL API 处理器
 type MySQLHandler struct {
-	svc *service.MySQLService
-	db  *store.SQLite
+	svc       *service.MySQLService
+	db        *store.SQLite
+	pfManager *k8s.PortForwardManager
 }
 
 // NewMySQLHandler 创建 MySQL 处理器
-func NewMySQLHandler(svc *service.MySQLService, db *store.SQLite) *MySQLHandler {
-	return &MySQLHandler{svc: svc, db: db}
+func NewMySQLHandler(svc *service.MySQLService, db *store.SQLite, pfManager *k8s.PortForwardManager) *MySQLHandler {
+	return &MySQLHandler{
+		svc:       svc,
+		db:        db,
+		pfManager: pfManager,
+	}
 }
 
-// getConnection 从请求头获取连接配置
+// getConnection 从请求头获取连接配置，并确保端口转发已建立
 func (h *MySQLHandler) getConnection(c *gin.Context) (*store.Connection, error) {
 	connIDStr := c.GetHeader("X-Connection-ID")
 	if connIDStr == "" {
@@ -31,7 +40,55 @@ func (h *MySQLHandler) getConnection(c *gin.Context) (*store.Connection, error) 
 	if err != nil {
 		return nil, err
 	}
-	return h.db.GetConnectionByID(connID)
+	
+	conn, err := h.db.GetConnectionByID(connID)
+	if err != nil {
+		return nil, err
+	}
+	
+	// 检查是否需要端口转发
+	if h.pfManager != nil && conn.K8sNamespace != "" && conn.K8sServiceName != "" {
+		// 检查端口转发是否已存在且活跃
+		if conn.ForwardID != "" {
+			forward, err := h.pfManager.GetForward(conn.ForwardID)
+			if err == nil && forward.Status == k8s.StatusActive {
+				// 端口转发活跃，更新最后使用时间
+				h.pfManager.UpdateLastUsed(conn.ForwardID)
+				return conn, nil
+			}
+		}
+		
+		// 需要创建或重新创建端口转发
+		log.Printf("Creating port forward for connection %d (%s/%s)", 
+			conn.ID, conn.K8sNamespace, conn.K8sServiceName)
+		
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
+		defer cancel()
+		
+		forward, err := h.pfManager.CreateForward(
+			ctx,
+			conn.ID,
+			conn.K8sNamespace,
+			conn.K8sServiceName,
+			int32(conn.K8sServicePort),
+		)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create port forward: %w", err)
+		}
+		
+		// 更新连接信息
+		conn.ForwardID = forward.ID
+		conn.ForwardLocalPort = forward.LocalPort
+		conn.ForwardStatus = string(forward.Status)
+		conn.Host = "localhost"
+		conn.Port = forward.LocalPort
+		
+		if err := h.db.UpdateConnection(conn); err != nil {
+			log.Printf("Warning: failed to update connection with forward info: %v", err)
+		}
+	}
+	
+	return conn, nil
 }
 
 // GetInfo 获取服务器信息

@@ -1,12 +1,14 @@
 package api
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/zeni-x/backend/internal/config"
+	"github.com/zeni-x/backend/internal/k8s"
 	"github.com/zeni-x/backend/internal/service"
 	"github.com/zeni-x/backend/internal/store"
 )
@@ -47,9 +49,34 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 	mysqlSvc := service.NewMySQLService()
 	redisSvc := service.NewRedisService()
 
-	// 创建处理器
-	mysqlHandler := NewMySQLHandler(mysqlSvc, db)
-	redisHandler := NewRedisHandler(redisSvc, db)
+	// 创建 K8s 服务发现服务（可选，如果失败则返回 nil）
+	discoverySvc, err := service.NewDiscoveryService()
+	if err != nil {
+		log.Printf("Warning: K8s discovery service disabled: %v", err)
+	}
+	// Always create handler (will handle nil discoveryService gracefully)
+	k8sHandler := NewK8sHandler(discoverySvc, db)
+
+	// 创建端口转发管理器（如果 K8s 可用）
+	var portForwardHandler *PortForwardHandler
+	var forwardMonitor *service.ForwardMonitor
+	var pfManager *k8s.PortForwardManager
+	if discoverySvc != nil {
+		// 从 discovery service 获取 K8s 客户端
+		k8sClient, err := k8s.NewClient()
+		if err == nil {
+			pfManager = k8s.NewPortForwardManager(k8sClient)
+			portForwardHandler = NewPortForwardHandler(pfManager, db)
+			
+			// 启动监控服务
+			forwardMonitor = service.NewForwardMonitor(pfManager, db)
+			forwardMonitor.Start()
+		}
+	}
+
+	// 创建处理器（传递 pfManager 用于自动端口转发）
+	mysqlHandler := NewMySQLHandler(mysqlSvc, db, pfManager)
+	redisHandler := NewRedisHandler(redisSvc, db, pfManager)
 
 	// API 路由组
 	api := r.Group("/api")
@@ -296,6 +323,56 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 			// 导入导出
 			redis.POST("/export", redisHandler.Export)
 			redis.POST("/import", redisHandler.Import)
+		}
+
+		// ==================== K8s 服务发现 API ====================
+		k8s := api.Group("/k8s")
+		{
+			// 发现集群中的中间件服务
+			k8s.POST("/discover", k8sHandler.DiscoverServices)
+			// 列出 kubeconfig 中的集群
+			k8s.POST("/clusters", k8sHandler.ListClusters)
+			// 批量导入服务为连接配置
+			k8s.POST("/import", k8sHandler.ImportConnections)
+		}
+
+		// ==================== 端口转发 API ====================
+		if portForwardHandler != nil {
+			pf := api.Group("/port-forward")
+			{
+				// 创建端口转发
+				pf.POST("", portForwardHandler.CreateForward)
+				// 列出所有转发
+				pf.GET("", portForwardHandler.ListForwards)
+				// 通过连接ID查询
+				pf.GET("/by-connection", portForwardHandler.GetForwardByConnection)
+				// 获取单个转发状态
+				pf.GET("/:id", portForwardHandler.GetForward)
+				// 停止端口转发
+				pf.DELETE("/:id", portForwardHandler.StopForward)
+				// 重新连接
+				pf.POST("/:id/reconnect", portForwardHandler.ReconnectForward)
+				// 更新使用时间
+				pf.PUT("/:id/touch", portForwardHandler.TouchForward)
+			}
+		}
+
+		// ==================== 集群管理 API ====================
+		clusterHandler := NewClusterHandler(db)
+		clusters := api.Group("/clusters")
+		{
+			// 获取所有集群
+			clusters.GET("", clusterHandler.GetClusters)
+			// 创建集群
+			clusters.POST("", clusterHandler.CreateCluster)
+			// 获取单个集群
+			clusters.GET("/:id", clusterHandler.GetCluster)
+			// 更新集群
+			clusters.PUT("/:id", clusterHandler.UpdateCluster)
+			// 删除集群
+			clusters.DELETE("/:id", clusterHandler.DeleteCluster)
+			// 获取集群下的所有连接
+			clusters.GET("/:id/connections", clusterHandler.GetClusterConnections)
 		}
 	}
 
