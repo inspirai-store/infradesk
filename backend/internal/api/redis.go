@@ -21,9 +21,32 @@ func NewRedisHandler(svc *service.RedisService, db *store.SQLite) *RedisHandler 
 	return &RedisHandler{svc: svc, db: db}
 }
 
+// getConnection 从请求头获取连接配置
+func (h *RedisHandler) getConnection(c *gin.Context) (*store.Connection, error) {
+	connIDStr := c.GetHeader("X-Connection-ID")
+	if connIDStr == "" {
+		return nil, nil
+	}
+	connID, err := strconv.ParseInt(connIDStr, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	return h.db.GetConnectionByID(connID)
+}
+
 // GetInfo 获取 Redis 信息
 func (h *RedisHandler) GetInfo(c *gin.Context) {
-	info, err := h.svc.GetInfo()
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	info, err := h.svc.GetInfo(conn)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -33,6 +56,16 @@ func (h *RedisHandler) GetInfo(c *gin.Context) {
 
 // ListKeys 列出 Keys
 func (h *RedisHandler) ListKeys(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	pattern := c.DefaultQuery("pattern", "*")
 	cursor, _ := strconv.ParseUint(c.DefaultQuery("cursor", "0"), 10, 64)
 	count, _ := strconv.ParseInt(c.DefaultQuery("count", "100"), 10, 64)
@@ -41,7 +74,7 @@ func (h *RedisHandler) ListKeys(c *gin.Context) {
 		count = 100
 	}
 
-	result, err := h.svc.ListKeys(pattern, cursor, count)
+	result, err := h.svc.ListKeys(conn, pattern, cursor, count)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -51,11 +84,21 @@ func (h *RedisHandler) ListKeys(c *gin.Context) {
 
 // GetKey 获取 Key 详情
 func (h *RedisHandler) GetKey(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	key := c.Param("key")
 	// 移除前导斜杠
 	key = strings.TrimPrefix(key, "/")
 
-	info, err := h.svc.GetKey(key)
+	info, err := h.svc.GetKey(conn, key)
 	if err != nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
 		return
@@ -65,13 +108,23 @@ func (h *RedisHandler) GetKey(c *gin.Context) {
 
 // SetKey 创建 Key
 func (h *RedisHandler) SetKey(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	var req service.SetKeyRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := h.svc.SetKey(&req); err != nil {
+	if err := h.svc.SetKey(conn, &req); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -81,6 +134,16 @@ func (h *RedisHandler) SetKey(c *gin.Context) {
 
 // UpdateKey 更新 Key
 func (h *RedisHandler) UpdateKey(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	key := c.Param("key")
 	key = strings.TrimPrefix(key, "/")
 
@@ -92,7 +155,7 @@ func (h *RedisHandler) UpdateKey(c *gin.Context) {
 
 	req.Key = key
 
-	if err := h.svc.SetKey(&req); err != nil {
+	if err := h.svc.SetKey(conn, &req); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -102,10 +165,20 @@ func (h *RedisHandler) UpdateKey(c *gin.Context) {
 
 // DeleteKey 删除 Key
 func (h *RedisHandler) DeleteKey(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	key := c.Param("key")
 	key = strings.TrimPrefix(key, "/")
 
-	if err := h.svc.DeleteKey(key); err != nil {
+	if err := h.svc.DeleteKey(conn, key); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -115,6 +188,16 @@ func (h *RedisHandler) DeleteKey(c *gin.Context) {
 
 // SetTTL 设置 TTL
 func (h *RedisHandler) SetTTL(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	key := c.Param("key")
 	key = strings.TrimPrefix(key, "/")
 
@@ -126,7 +209,7 @@ func (h *RedisHandler) SetTTL(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.SetTTL(key, req.TTL); err != nil {
+	if err := h.svc.SetTTL(conn, key, req.TTL); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -136,6 +219,16 @@ func (h *RedisHandler) SetTTL(c *gin.Context) {
 
 // Export 导出数据
 func (h *RedisHandler) Export(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	var req struct {
 		Keys   []string `json:"keys"`
 		Format string   `json:"format"` // json
@@ -150,7 +243,7 @@ func (h *RedisHandler) Export(c *gin.Context) {
 		return
 	}
 
-	data, err := h.svc.Export(req.Keys)
+	data, err := h.svc.Export(conn, req.Keys)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -161,13 +254,23 @@ func (h *RedisHandler) Export(c *gin.Context) {
 
 // Import 导入数据
 func (h *RedisHandler) Import(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	var data service.ExportData
 	if err := c.ShouldBindJSON(&data); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := h.svc.Import(&data); err != nil {
+	if err := h.svc.Import(conn, &data); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -177,4 +280,3 @@ func (h *RedisHandler) Import(c *gin.Context) {
 		"count":   len(data.Keys),
 	})
 }
-

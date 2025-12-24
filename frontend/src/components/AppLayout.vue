@@ -15,6 +15,7 @@ import {
   KeyOutline, 
   HomeOutline,
   TerminalOutline,
+  LinkOutline,
 } from '@vicons/ionicons5'
 import type { MenuOption } from 'naive-ui'
 import { h } from 'vue'
@@ -24,6 +25,7 @@ const router = useRouter()
 
 const activeKey = computed(() => {
   const path = route.path
+  if (path.startsWith('/connections')) return 'connections'
   if (path.startsWith('/mysql')) return 'mysql'
   if (path.startsWith('/redis')) return 'redis'
   return 'home'
@@ -34,6 +36,11 @@ const menuOptions: MenuOption[] = [
     label: '控制台',
     key: 'home',
     icon: () => h(NIcon, null, { default: () => h(HomeOutline) }),
+  },
+  {
+    label: '连接管理',
+    key: 'connections',
+    icon: () => h(NIcon, null, { default: () => h(LinkOutline) }),
   },
   {
     type: 'divider',
@@ -64,6 +71,9 @@ function handleMenuSelect(key: string) {
   switch (key) {
     case 'home':
       router.push('/')
+      break
+    case 'connections':
+      router.push('/connections')
       break
     case 'mysql':
       router.push('/mysql')

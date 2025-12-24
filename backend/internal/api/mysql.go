@@ -21,9 +21,32 @@ func NewMySQLHandler(svc *service.MySQLService, db *store.SQLite) *MySQLHandler 
 	return &MySQLHandler{svc: svc, db: db}
 }
 
+// getConnection 从请求头获取连接配置
+func (h *MySQLHandler) getConnection(c *gin.Context) (*store.Connection, error) {
+	connIDStr := c.GetHeader("X-Connection-ID")
+	if connIDStr == "" {
+		return nil, nil
+	}
+	connID, err := strconv.ParseInt(connIDStr, 10, 64)
+	if err != nil {
+		return nil, err
+	}
+	return h.db.GetConnectionByID(connID)
+}
+
 // GetInfo 获取服务器信息
 func (h *MySQLHandler) GetInfo(c *gin.Context) {
-	info, err := h.svc.GetInfo()
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	info, err := h.svc.GetInfo(conn)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -33,7 +56,17 @@ func (h *MySQLHandler) GetInfo(c *gin.Context) {
 
 // ListDatabases 列出数据库
 func (h *MySQLHandler) ListDatabases(c *gin.Context) {
-	databases, err := h.svc.ListDatabases()
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	databases, err := h.svc.ListDatabases(conn)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -43,6 +76,16 @@ func (h *MySQLHandler) ListDatabases(c *gin.Context) {
 
 // CreateDatabase 创建数据库
 func (h *MySQLHandler) CreateDatabase(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	var req struct {
 		Name string `json:"name" binding:"required"`
 	}
@@ -51,7 +94,7 @@ func (h *MySQLHandler) CreateDatabase(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.CreateDatabase(req.Name); err != nil {
+	if err := h.svc.CreateDatabase(conn, req.Name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -61,8 +104,18 @@ func (h *MySQLHandler) CreateDatabase(c *gin.Context) {
 
 // DropDatabase 删除数据库
 func (h *MySQLHandler) DropDatabase(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	name := c.Param("db")
-	if err := h.svc.DropDatabase(name); err != nil {
+	if err := h.svc.DropDatabase(conn, name); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -71,8 +124,18 @@ func (h *MySQLHandler) DropDatabase(c *gin.Context) {
 
 // ListTables 列出表
 func (h *MySQLHandler) ListTables(c *gin.Context) {
-	db := c.Param("db")
-	tables, err := h.svc.ListTables(db)
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	dbName := c.Param("db")
+	tables, err := h.svc.ListTables(conn, dbName)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -82,14 +145,24 @@ func (h *MySQLHandler) ListTables(c *gin.Context) {
 
 // CreateTable 创建表
 func (h *MySQLHandler) CreateTable(c *gin.Context) {
-	db := c.Param("db")
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	dbName := c.Param("db")
 	var req service.CreateTableRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := h.svc.CreateTable(db, &req); err != nil {
+	if err := h.svc.CreateTable(conn, dbName, &req); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -99,9 +172,19 @@ func (h *MySQLHandler) CreateTable(c *gin.Context) {
 
 // DropTable 删除表
 func (h *MySQLHandler) DropTable(c *gin.Context) {
-	db := c.Param("db")
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	dbName := c.Param("db")
 	table := c.Param("table")
-	if err := h.svc.DropTable(db, table); err != nil {
+	if err := h.svc.DropTable(conn, dbName, table); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -110,9 +193,19 @@ func (h *MySQLHandler) DropTable(c *gin.Context) {
 
 // GetTableSchema 获取表结构
 func (h *MySQLHandler) GetTableSchema(c *gin.Context) {
-	db := c.Param("db")
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	dbName := c.Param("db")
 	table := c.Param("table")
-	schema, err := h.svc.GetTableSchema(db, table)
+	schema, err := h.svc.GetTableSchema(conn, dbName, table)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -122,7 +215,17 @@ func (h *MySQLHandler) GetTableSchema(c *gin.Context) {
 
 // AlterTable 修改表结构
 func (h *MySQLHandler) AlterTable(c *gin.Context) {
-	db := c.Param("db")
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	dbName := c.Param("db")
 	table := c.Param("table")
 	var req service.AlterTableRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -130,7 +233,7 @@ func (h *MySQLHandler) AlterTable(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.AlterTable(db, table, &req); err != nil {
+	if err := h.svc.AlterTable(conn, dbName, table, &req); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -140,7 +243,17 @@ func (h *MySQLHandler) AlterTable(c *gin.Context) {
 
 // GetRows 获取表数据
 func (h *MySQLHandler) GetRows(c *gin.Context) {
-	db := c.Param("db")
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	dbName := c.Param("db")
 	table := c.Param("table")
 
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
@@ -153,7 +266,7 @@ func (h *MySQLHandler) GetRows(c *gin.Context) {
 		size = 50
 	}
 
-	result, err := h.svc.GetRows(db, table, page, size)
+	result, err := h.svc.GetRows(conn, dbName, table, page, size)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -163,7 +276,17 @@ func (h *MySQLHandler) GetRows(c *gin.Context) {
 
 // InsertRow 插入数据
 func (h *MySQLHandler) InsertRow(c *gin.Context) {
-	db := c.Param("db")
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	dbName := c.Param("db")
 	table := c.Param("table")
 
 	var data map[string]interface{}
@@ -172,7 +295,7 @@ func (h *MySQLHandler) InsertRow(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.InsertRow(db, table, data); err != nil {
+	if err := h.svc.InsertRow(conn, dbName, table, data); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -182,7 +305,17 @@ func (h *MySQLHandler) InsertRow(c *gin.Context) {
 
 // UpdateRow 更新数据
 func (h *MySQLHandler) UpdateRow(c *gin.Context) {
-	db := c.Param("db")
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	dbName := c.Param("db")
 	table := c.Param("table")
 
 	var req service.UpdateRowRequest
@@ -191,7 +324,7 @@ func (h *MySQLHandler) UpdateRow(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.UpdateRow(db, table, &req); err != nil {
+	if err := h.svc.UpdateRow(conn, dbName, table, &req); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -201,7 +334,17 @@ func (h *MySQLHandler) UpdateRow(c *gin.Context) {
 
 // DeleteRow 删除数据
 func (h *MySQLHandler) DeleteRow(c *gin.Context) {
-	db := c.Param("db")
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	dbName := c.Param("db")
 	table := c.Param("table")
 
 	var where map[string]interface{}
@@ -210,7 +353,7 @@ func (h *MySQLHandler) DeleteRow(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.DeleteRow(db, table, where); err != nil {
+	if err := h.svc.DeleteRow(conn, dbName, table, where); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -220,6 +363,16 @@ func (h *MySQLHandler) DeleteRow(c *gin.Context) {
 
 // ExecuteQuery 执行 SQL 查询
 func (h *MySQLHandler) ExecuteQuery(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	var req struct {
 		Database string `json:"database"`
 		Query    string `json:"query" binding:"required"`
@@ -230,7 +383,7 @@ func (h *MySQLHandler) ExecuteQuery(c *gin.Context) {
 	}
 
 	start := time.Now()
-	result, err := h.svc.ExecuteQuery(req.Database, req.Query)
+	result, err := h.svc.ExecuteQuery(conn, req.Database, req.Query)
 	duration := time.Since(start).Milliseconds()
 
 	if err != nil {
@@ -246,10 +399,11 @@ func (h *MySQLHandler) ExecuteQuery(c *gin.Context) {
 		rowCount = int64(len(result.Rows))
 	}
 	h.db.AddQueryHistory(&store.QueryHistory{
-		QueryType:  "mysql",
-		QueryText:  req.Query,
-		DurationMs: duration,
-		RowCount:   rowCount,
+		ConnectionID: conn.ID,
+		QueryType:    "mysql",
+		QueryText:    req.Query,
+		DurationMs:   duration,
+		RowCount:     rowCount,
 	})
 
 	c.JSON(http.StatusOK, result)
@@ -257,6 +411,16 @@ func (h *MySQLHandler) ExecuteQuery(c *gin.Context) {
 
 // Export 导出数据
 func (h *MySQLHandler) Export(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	var req struct {
 		Database string `json:"database" binding:"required"`
 		Table    string `json:"table" binding:"required"`
@@ -268,7 +432,7 @@ func (h *MySQLHandler) Export(c *gin.Context) {
 	}
 
 	// 获取所有数据
-	result, err := h.svc.GetRows(req.Database, req.Table, 1, 10000)
+	result, err := h.svc.GetRows(conn, req.Database, req.Table, 1, 10000)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -362,6 +526,16 @@ func toFloat64(v interface{}) float64 {
 
 // Import 导入数据
 func (h *MySQLHandler) Import(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
 	var req struct {
 		Database string                   `json:"database" binding:"required"`
 		Table    string                   `json:"table" binding:"required"`
@@ -374,7 +548,7 @@ func (h *MySQLHandler) Import(c *gin.Context) {
 
 	var successCount, errorCount int
 	for _, row := range req.Rows {
-		if err := h.svc.InsertRow(req.Database, req.Table, row); err != nil {
+		if err := h.svc.InsertRow(conn, req.Database, req.Table, row); err != nil {
 			errorCount++
 		} else {
 			successCount++
@@ -387,4 +561,3 @@ func (h *MySQLHandler) Import(c *gin.Context) {
 		"error_count":   errorCount,
 	})
 }
-

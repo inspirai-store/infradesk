@@ -1,5 +1,5 @@
 import axios from 'axios'
-import type { AxiosInstance } from 'axios'
+import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
 
 const api: AxiosInstance = axios.create({
   baseURL: '/api',
@@ -8,6 +8,48 @@ const api: AxiosInstance = axios.create({
     'Content-Type': 'application/json',
   },
 })
+
+// Active connection IDs per type (managed by connection store)
+let activeConnectionIds: Record<string, number | null> = {}
+
+// Function to set active connection ID (called by connection store)
+export function setActiveConnectionId(type: string, id: number | null) {
+  activeConnectionIds[type] = id
+}
+
+// Function to get active connection ID
+export function getActiveConnectionId(type: string): number | null {
+  return activeConnectionIds[type] ?? null
+}
+
+// Request interceptor to inject X-Connection-ID header
+api.interceptors.request.use(
+  (config: InternalAxiosRequestConfig) => {
+    // Determine connection type based on URL
+    const url = config.url || ''
+    let connectionType: string | null = null
+    
+    if (url.startsWith('/mysql')) {
+      connectionType = 'mysql'
+    } else if (url.startsWith('/redis')) {
+      connectionType = 'redis'
+    } else if (url.startsWith('/mongodb')) {
+      connectionType = 'mongodb'
+    } else if (url.startsWith('/minio')) {
+      connectionType = 'minio'
+    }
+    
+    if (connectionType) {
+      const connId = activeConnectionIds[connectionType]
+      if (connId) {
+        config.headers.set('X-Connection-ID', connId.toString())
+      }
+    }
+    
+    return config
+  },
+  (error) => Promise.reject(error)
+)
 
 // Response interceptor
 api.interceptors.response.use(
@@ -20,7 +62,31 @@ api.interceptors.response.use(
 
 export default api
 
-// MySQL API
+// ==================== Connection Management API ====================
+export const connectionApi = {
+  // Get all connections
+  getAll: () => api.get<Connection[]>('/connections'),
+  
+  // Get single connection
+  getById: (id: number) => api.get<Connection>(`/connections/${id}`),
+  
+  // Create connection
+  create: (data: Connection) => api.post<Connection>('/connections', data),
+  
+  // Update connection
+  update: (id: number, data: Connection) => api.put<Connection>(`/connections/${id}`, data),
+  
+  // Delete connection
+  delete: (id: number) => api.delete(`/connections/${id}`),
+  
+  // Test connection
+  test: (data: Connection) => api.post<TestConnectionResult>('/connections/test', data),
+  
+  // Get connections by type
+  getByType: (type: string) => api.get<Connection[]>(`/connections/types/${type}`),
+}
+
+// ==================== MySQL API ====================
 export const mysqlApi = {
   getInfo: () => api.get('/mysql/info'),
   
@@ -63,7 +129,7 @@ export const mysqlApi = {
     api.post('/mysql/import', { database, table, rows }),
 }
 
-// Redis API
+// ==================== Redis API ====================
 export const redisApi = {
   getInfo: () => api.get('/redis/info'),
   
@@ -85,7 +151,7 @@ export const redisApi = {
   importKeys: (data: ExportData) => api.post('/redis/import', data),
 }
 
-// System API
+// ==================== System API ====================
 export const systemApi = {
   getConnections: () => api.get('/connections'),
   createConnection: (data: Connection) => api.post('/connections', data),
@@ -95,7 +161,7 @@ export const systemApi = {
   deleteSavedQuery: (id: number) => api.delete(`/saved-queries/${id}`),
 }
 
-// Types
+// ==================== Types ====================
 export interface CreateTableRequest {
   name: string
   columns: ColumnDef[]
@@ -147,13 +213,21 @@ export interface KeyInfo {
 export interface Connection {
   id?: number
   name: string
-  type: string
+  type: 'mysql' | 'redis' | 'mongodb' | 'minio'
   host: string
   port: number
   username?: string
   password?: string
   database_name?: string
   is_default?: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+export interface TestConnectionResult {
+  success: boolean
+  error?: string
+  message?: string
 }
 
 export interface SavedQuery {
@@ -162,4 +236,3 @@ export interface SavedQuery {
   name: string
   query_text: string
 }
-

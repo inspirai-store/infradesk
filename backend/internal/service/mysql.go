@@ -6,26 +6,26 @@ import (
 	"strings"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/zeni-x/backend/internal/config"
+	"github.com/zeni-x/backend/internal/store"
 )
 
 // MySQLService MySQL 服务
 type MySQLService struct {
-	cfg *config.Config
+	// No longer holds global config - connections are passed dynamically
 }
 
 // NewMySQLService 创建 MySQL 服务
-func NewMySQLService(cfg *config.Config) *MySQLService {
-	return &MySQLService{cfg: cfg}
+func NewMySQLService() *MySQLService {
+	return &MySQLService{}
 }
 
 // connect 创建数据库连接
-func (s *MySQLService) connect(database string) (*sql.DB, error) {
+func (s *MySQLService) connect(conn *store.Connection, database string) (*sql.DB, error) {
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?parseTime=true&charset=utf8mb4",
-		s.cfg.MySQL.User,
-		s.cfg.MySQL.Password,
-		s.cfg.MySQL.Host,
-		s.cfg.MySQL.Port,
+		conn.Username,
+		conn.Password,
+		conn.Host,
+		conn.Port,
 		database,
 	)
 
@@ -51,12 +51,12 @@ type ServerInfo struct {
 }
 
 // GetInfo 获取服务器信息
-func (s *MySQLService) GetInfo() (*ServerInfo, error) {
-	db, err := s.connect("")
+func (s *MySQLService) GetInfo(conn *store.Connection) (*ServerInfo, error) {
+	db, err := s.connect(conn, "")
 	if err != nil {
 		return &ServerInfo{
-			Host:      s.cfg.MySQL.Host,
-			Port:      s.cfg.MySQL.Port,
+			Host:      conn.Host,
+			Port:      conn.Port,
 			Connected: false,
 		}, nil
 	}
@@ -69,22 +69,22 @@ func (s *MySQLService) GetInfo() (*ServerInfo, error) {
 
 	return &ServerInfo{
 		Version:   version,
-		Host:      s.cfg.MySQL.Host,
-		Port:      s.cfg.MySQL.Port,
+		Host:      conn.Host,
+		Port:      conn.Port,
 		Connected: true,
 	}, nil
 }
 
 // Database 数据库信息
 type Database struct {
-	Name      string `json:"name"`
-	TableCount int   `json:"table_count"`
-	Size      string `json:"size"`
+	Name       string `json:"name"`
+	TableCount int    `json:"table_count"`
+	Size       string `json:"size"`
 }
 
 // ListDatabases 列出所有数据库
-func (s *MySQLService) ListDatabases() ([]Database, error) {
-	db, err := s.connect("")
+func (s *MySQLService) ListDatabases(conn *store.Connection) ([]Database, error) {
+	db, err := s.connect(conn, "")
 	if err != nil {
 		return nil, err
 	}
@@ -113,8 +113,8 @@ func (s *MySQLService) ListDatabases() ([]Database, error) {
 }
 
 // CreateDatabase 创建数据库
-func (s *MySQLService) CreateDatabase(name string) error {
-	db, err := s.connect("")
+func (s *MySQLService) CreateDatabase(conn *store.Connection, name string) error {
+	db, err := s.connect(conn, "")
 	if err != nil {
 		return err
 	}
@@ -125,8 +125,8 @@ func (s *MySQLService) CreateDatabase(name string) error {
 }
 
 // DropDatabase 删除数据库
-func (s *MySQLService) DropDatabase(name string) error {
-	db, err := s.connect("")
+func (s *MySQLService) DropDatabase(conn *store.Connection, name string) error {
+	db, err := s.connect(conn, "")
 	if err != nil {
 		return err
 	}
@@ -147,8 +147,8 @@ type Table struct {
 }
 
 // ListTables 列出数据库中的所有表
-func (s *MySQLService) ListTables(database string) ([]Table, error) {
-	db, err := s.connect(database)
+func (s *MySQLService) ListTables(conn *store.Connection, database string) ([]Table, error) {
+	db, err := s.connect(conn, database)
 	if err != nil {
 		return nil, err
 	}
@@ -186,13 +186,13 @@ func (s *MySQLService) ListTables(database string) ([]Table, error) {
 
 // Column 列信息
 type Column struct {
-	Name          string  `json:"name"`
-	Type          string  `json:"type"`
-	Nullable      bool    `json:"nullable"`
-	Key           string  `json:"key"`
-	Default       *string `json:"default"`
-	Extra         string  `json:"extra"`
-	Comment       string  `json:"comment"`
+	Name     string  `json:"name"`
+	Type     string  `json:"type"`
+	Nullable bool    `json:"nullable"`
+	Key      string  `json:"key"`
+	Default  *string `json:"default"`
+	Extra    string  `json:"extra"`
+	Comment  string  `json:"comment"`
 }
 
 // TableSchema 表结构
@@ -204,15 +204,15 @@ type TableSchema struct {
 
 // Index 索引信息
 type Index struct {
-	Name      string   `json:"name"`
-	Columns   []string `json:"columns"`
-	Unique    bool     `json:"unique"`
-	Type      string   `json:"type"`
+	Name    string   `json:"name"`
+	Columns []string `json:"columns"`
+	Unique  bool     `json:"unique"`
+	Type    string   `json:"type"`
 }
 
 // GetTableSchema 获取表结构
-func (s *MySQLService) GetTableSchema(database, table string) (*TableSchema, error) {
-	db, err := s.connect(database)
+func (s *MySQLService) GetTableSchema(conn *store.Connection, database, table string) (*TableSchema, error) {
+	db, err := s.connect(conn, database)
 	if err != nil {
 		return nil, err
 	}
@@ -301,10 +301,10 @@ func (s *MySQLService) GetTableSchema(database, table string) (*TableSchema, err
 
 // CreateTableRequest 创建表请求
 type CreateTableRequest struct {
-	Name    string         `json:"name"`
-	Columns []ColumnDef    `json:"columns"`
-	Engine  string         `json:"engine"`
-	Comment string         `json:"comment"`
+	Name    string      `json:"name"`
+	Columns []ColumnDef `json:"columns"`
+	Engine  string      `json:"engine"`
+	Comment string      `json:"comment"`
 }
 
 // ColumnDef 列定义
@@ -320,8 +320,8 @@ type ColumnDef struct {
 }
 
 // CreateTable 创建表
-func (s *MySQLService) CreateTable(database string, req *CreateTableRequest) error {
-	db, err := s.connect(database)
+func (s *MySQLService) CreateTable(conn *store.Connection, database string, req *CreateTableRequest) error {
+	db, err := s.connect(conn, database)
 	if err != nil {
 		return err
 	}
@@ -372,8 +372,8 @@ func (s *MySQLService) CreateTable(database string, req *CreateTableRequest) err
 }
 
 // DropTable 删除表
-func (s *MySQLService) DropTable(database, table string) error {
-	db, err := s.connect(database)
+func (s *MySQLService) DropTable(conn *store.Connection, database, table string) error {
+	db, err := s.connect(conn, database)
 	if err != nil {
 		return err
 	}
@@ -398,8 +398,8 @@ type RenameCol struct {
 }
 
 // AlterTable 修改表结构
-func (s *MySQLService) AlterTable(database, table string, req *AlterTableRequest) error {
-	db, err := s.connect(database)
+func (s *MySQLService) AlterTable(conn *store.Connection, database, table string, req *AlterTableRequest) error {
+	db, err := s.connect(conn, database)
 	if err != nil {
 		return err
 	}
@@ -460,8 +460,8 @@ type RowsResult struct {
 }
 
 // GetRows 获取表数据
-func (s *MySQLService) GetRows(database, table string, page, size int) (*RowsResult, error) {
-	db, err := s.connect(database)
+func (s *MySQLService) GetRows(conn *store.Connection, database, table string, page, size int) (*RowsResult, error) {
+	db, err := s.connect(conn, database)
 	if err != nil {
 		return nil, err
 	}
@@ -520,8 +520,8 @@ func (s *MySQLService) GetRows(database, table string, page, size int) (*RowsRes
 }
 
 // InsertRow 插入行
-func (s *MySQLService) InsertRow(database, table string, data map[string]interface{}) error {
-	db, err := s.connect(database)
+func (s *MySQLService) InsertRow(conn *store.Connection, database, table string, data map[string]interface{}) error {
+	db, err := s.connect(conn, database)
 	if err != nil {
 		return err
 	}
@@ -554,8 +554,8 @@ type UpdateRowRequest struct {
 }
 
 // UpdateRow 更新行
-func (s *MySQLService) UpdateRow(database, table string, req *UpdateRowRequest) error {
-	db, err := s.connect(database)
+func (s *MySQLService) UpdateRow(conn *store.Connection, database, table string, req *UpdateRowRequest) error {
+	db, err := s.connect(conn, database)
 	if err != nil {
 		return err
 	}
@@ -586,8 +586,8 @@ func (s *MySQLService) UpdateRow(database, table string, req *UpdateRowRequest) 
 }
 
 // DeleteRow 删除行
-func (s *MySQLService) DeleteRow(database, table string, where map[string]interface{}) error {
-	db, err := s.connect(database)
+func (s *MySQLService) DeleteRow(conn *store.Connection, database, table string, where map[string]interface{}) error {
+	db, err := s.connect(conn, database)
 	if err != nil {
 		return err
 	}
@@ -615,8 +615,8 @@ type QueryResult struct {
 }
 
 // ExecuteQuery 执行 SQL 查询
-func (s *MySQLService) ExecuteQuery(database, query string) (*QueryResult, error) {
-	db, err := s.connect(database)
+func (s *MySQLService) ExecuteQuery(conn *store.Connection, database, query string) (*QueryResult, error) {
+	db, err := s.connect(conn, database)
 	if err != nil {
 		return nil, err
 	}
@@ -681,3 +681,12 @@ func (s *MySQLService) ExecuteQuery(database, query string) (*QueryResult, error
 	}, nil
 }
 
+// TestConnection 测试连接是否有效
+func (s *MySQLService) TestConnection(conn *store.Connection) error {
+	db, err := s.connect(conn, "")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	return nil
+}

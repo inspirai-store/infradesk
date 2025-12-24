@@ -272,3 +272,62 @@ func (s *SQLite) DeleteSavedQuery(id int64) error {
 	return err
 }
 
+// GetConnectionByID 根据 ID 获取连接配置（包含密码，用于服务端连接）
+func (s *SQLite) GetConnectionByID(id int64) (*Connection, error) {
+	var c Connection
+	var username, password, dbName sql.NullString
+	err := s.db.QueryRow(`
+		SELECT id, name, type, host, port, username, password, database_name, is_default, created_at, updated_at 
+		FROM connections WHERE id = ?
+	`, id).Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &username, &password, &dbName, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt)
+	if err != nil {
+		return nil, err
+	}
+	c.Username = username.String
+	c.Password = password.String
+	c.DatabaseName = dbName.String
+	return &c, nil
+}
+
+// UpdateConnection 更新连接配置
+func (s *SQLite) UpdateConnection(c *Connection) error {
+	_, err := s.db.Exec(`
+		UPDATE connections 
+		SET name = ?, type = ?, host = ?, port = ?, username = ?, password = ?, database_name = ?, is_default = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, c.Name, c.Type, c.Host, c.Port, c.Username, c.Password, c.DatabaseName, c.IsDefault, c.ID)
+	return err
+}
+
+// DeleteConnection 删除连接配置
+func (s *SQLite) DeleteConnection(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM connections WHERE id = ?`, id)
+	return err
+}
+
+// GetConnectionsByType 按类型获取连接配置列表
+func (s *SQLite) GetConnectionsByType(connType string) ([]Connection, error) {
+	rows, err := s.db.Query(`
+		SELECT id, name, type, host, port, username, database_name, is_default, created_at, updated_at 
+		FROM connections WHERE type = ? ORDER BY created_at DESC
+	`, connType)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var connections []Connection
+	for rows.Next() {
+		var c Connection
+		var username, dbName sql.NullString
+		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.Host, &c.Port, &username, &dbName, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, err
+		}
+		c.Username = username.String
+		c.DatabaseName = dbName.String
+		connections = append(connections, c)
+	}
+
+	return connections, nil
+}
+

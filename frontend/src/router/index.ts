@@ -8,6 +8,11 @@ const routes: RouteRecordRaw[] = [
     component: () => import('@/views/Home.vue'),
   },
   {
+    path: '/connections',
+    name: 'Connections',
+    component: () => import('@/views/connections/ConnectionsView.vue'),
+  },
+  {
     path: '/mysql',
     name: 'MySQL',
     component: () => import('@/views/mysql/MySQLView.vue'),

@@ -24,7 +24,7 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 	r.Use(cors.New(cors.Config{
 		AllowOrigins:     []string{"*"},
 		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
-		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Accept", "Authorization", "X-Connection-ID"},
 		ExposeHeaders:    []string{"Content-Length"},
 		AllowCredentials: true,
 	}))
@@ -43,9 +43,9 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 		})
 	})
 
-	// 创建服务实例
-	mysqlSvc := service.NewMySQLService(cfg)
-	redisSvc := service.NewRedisService(cfg)
+	// 创建服务实例 (no longer need config)
+	mysqlSvc := service.NewMySQLService()
+	redisSvc := service.NewRedisService()
 
 	// 创建处理器
 	mysqlHandler := NewMySQLHandler(mysqlSvc, db)
@@ -54,7 +54,8 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 	// API 路由组
 	api := r.Group("/api")
 	{
-		// 系统 API
+		// ==================== 连接管理 API ====================
+		// 获取所有连接
 		api.GET("/connections", func(c *gin.Context) {
 			connections, err := db.GetConnections()
 			if err != nil {
@@ -64,6 +65,23 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 			c.JSON(http.StatusOK, connections)
 		})
 
+		// 获取单个连接
+		api.GET("/connections/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			idInt, err := strconv.ParseInt(id, 10, 64)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+				return
+			}
+			conn, err := db.GetConnectionByID(idInt)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
+				return
+			}
+			c.JSON(http.StatusOK, conn)
+		})
+
+		// 创建连接
 		api.POST("/connections", func(c *gin.Context) {
 			var conn store.Connection
 			if err := c.ShouldBindJSON(&conn); err != nil {
@@ -77,6 +95,80 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 			c.JSON(http.StatusCreated, conn)
 		})
 
+		// 更新连接
+		api.PUT("/connections/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			idInt, err := strconv.ParseInt(id, 10, 64)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+				return
+			}
+			var conn store.Connection
+			if err := c.ShouldBindJSON(&conn); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			conn.ID = idInt
+			if err := db.UpdateConnection(&conn); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, conn)
+		})
+
+		// 删除连接
+		api.DELETE("/connections/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			idInt, err := strconv.ParseInt(id, 10, 64)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+				return
+			}
+			if err := db.DeleteConnection(idInt); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
+		})
+
+		// 测试连接
+		api.POST("/connections/test", func(c *gin.Context) {
+			var conn store.Connection
+			if err := c.ShouldBindJSON(&conn); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+
+			var testErr error
+			switch conn.Type {
+			case "mysql":
+				testErr = mysqlSvc.TestConnection(&conn)
+			case "redis":
+				testErr = redisSvc.TestConnection(&conn)
+			default:
+				c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported connection type"})
+				return
+			}
+
+			if testErr != nil {
+				c.JSON(http.StatusOK, gin.H{"success": false, "error": testErr.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"success": true, "message": "connection successful"})
+		})
+
+		// 按类型获取连接
+		api.GET("/connections/types/:type", func(c *gin.Context) {
+			connType := c.Param("type")
+			connections, err := db.GetConnectionsByType(connType)
+			if err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, connections)
+		})
+
+		// ==================== 历史和收藏 API ====================
 		api.GET("/history", func(c *gin.Context) {
 			queryType := c.Query("type")
 			limit := 100
@@ -124,7 +216,7 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
 		})
 
-		// MySQL API
+		// ==================== MySQL API ====================
 		mysql := api.Group("/mysql")
 		{
 			// 连接信息
@@ -159,7 +251,7 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 			mysql.POST("/import", mysqlHandler.Import)
 		}
 
-		// Redis API
+		// ==================== Redis API ====================
 		redis := api.Group("/redis")
 		{
 			// 连接信息
@@ -184,4 +276,3 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 
 	return r
 }
-

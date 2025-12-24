@@ -4,28 +4,37 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/go-redis/redis/v8"
-	"github.com/zeni-x/backend/internal/config"
+	"github.com/zeni-x/backend/internal/store"
 )
 
 // RedisService Redis 服务
 type RedisService struct {
-	cfg *config.Config
+	// No longer holds global config - connections are passed dynamically
 }
 
 // NewRedisService 创建 Redis 服务
-func NewRedisService(cfg *config.Config) *RedisService {
-	return &RedisService{cfg: cfg}
+func NewRedisService() *RedisService {
+	return &RedisService{}
 }
 
 // connect 创建 Redis 连接
-func (s *RedisService) connect() (*redis.Client, error) {
+func (s *RedisService) connect(conn *store.Connection) (*redis.Client, error) {
+	// Parse DB index from DatabaseName field (stored as string)
+	dbIndex := 0
+	if conn.DatabaseName != "" {
+		if parsed, err := strconv.Atoi(conn.DatabaseName); err == nil {
+			dbIndex = parsed
+		}
+	}
+
 	client := redis.NewClient(&redis.Options{
-		Addr:     fmt.Sprintf("%s:%d", s.cfg.Redis.Host, s.cfg.Redis.Port),
-		Password: s.cfg.Redis.Password,
-		DB:       s.cfg.Redis.DB,
+		Addr:     fmt.Sprintf("%s:%d", conn.Host, conn.Port),
+		Password: conn.Password,
+		DB:       dbIndex,
 	})
 
 	ctx := context.Background()
@@ -38,22 +47,22 @@ func (s *RedisService) connect() (*redis.Client, error) {
 
 // RedisInfo Redis 服务器信息
 type RedisInfo struct {
-	Version     string `json:"version"`
-	Host        string `json:"host"`
-	Port        int    `json:"port"`
-	Connected   bool   `json:"connected"`
-	UsedMemory  string `json:"used_memory"`
-	TotalKeys   int64  `json:"total_keys"`
-	ConnectedClients int64 `json:"connected_clients"`
+	Version          string `json:"version"`
+	Host             string `json:"host"`
+	Port             int    `json:"port"`
+	Connected        bool   `json:"connected"`
+	UsedMemory       string `json:"used_memory"`
+	TotalKeys        int64  `json:"total_keys"`
+	ConnectedClients int64  `json:"connected_clients"`
 }
 
 // GetInfo 获取 Redis 信息
-func (s *RedisService) GetInfo() (*RedisInfo, error) {
-	client, err := s.connect()
+func (s *RedisService) GetInfo(conn *store.Connection) (*RedisInfo, error) {
+	client, err := s.connect(conn)
 	if err != nil {
 		return &RedisInfo{
-			Host:      s.cfg.Redis.Host,
-			Port:      s.cfg.Redis.Port,
+			Host:      conn.Host,
+			Port:      conn.Port,
 			Connected: false,
 		}, nil
 	}
@@ -87,8 +96,8 @@ func (s *RedisService) GetInfo() (*RedisInfo, error) {
 
 	return &RedisInfo{
 		Version:          version,
-		Host:             s.cfg.Redis.Host,
-		Port:             s.cfg.Redis.Port,
+		Host:             conn.Host,
+		Port:             conn.Port,
 		Connected:        true,
 		UsedMemory:       usedMemory,
 		TotalKeys:        dbSize,
@@ -132,8 +141,8 @@ type KeysResult struct {
 }
 
 // ListKeys 列出 Keys
-func (s *RedisService) ListKeys(pattern string, cursor uint64, count int64) (*KeysResult, error) {
-	client, err := s.connect()
+func (s *RedisService) ListKeys(conn *store.Connection, pattern string, cursor uint64, count int64) (*KeysResult, error) {
+	client, err := s.connect(conn)
 	if err != nil {
 		return nil, err
 	}
@@ -175,8 +184,8 @@ func (s *RedisService) ListKeys(pattern string, cursor uint64, count int64) (*Ke
 }
 
 // GetKey 获取 Key 详情
-func (s *RedisService) GetKey(key string) (*KeyInfo, error) {
-	client, err := s.connect()
+func (s *RedisService) GetKey(conn *store.Connection, key string) (*KeyInfo, error) {
+	client, err := s.connect(conn)
 	if err != nil {
 		return nil, err
 	}
@@ -253,8 +262,8 @@ type SetKeyRequest struct {
 }
 
 // SetKey 设置 Key
-func (s *RedisService) SetKey(req *SetKeyRequest) error {
-	client, err := s.connect()
+func (s *RedisService) SetKey(conn *store.Connection, req *SetKeyRequest) error {
+	client, err := s.connect(conn)
 	if err != nil {
 		return err
 	}
@@ -359,8 +368,8 @@ func (s *RedisService) SetKey(req *SetKeyRequest) error {
 }
 
 // DeleteKey 删除 Key
-func (s *RedisService) DeleteKey(key string) error {
-	client, err := s.connect()
+func (s *RedisService) DeleteKey(conn *store.Connection, key string) error {
+	client, err := s.connect(conn)
 	if err != nil {
 		return err
 	}
@@ -370,8 +379,8 @@ func (s *RedisService) DeleteKey(key string) error {
 }
 
 // SetTTL 设置 TTL
-func (s *RedisService) SetTTL(key string, ttl int64) error {
-	client, err := s.connect()
+func (s *RedisService) SetTTL(conn *store.Connection, key string, ttl int64) error {
+	client, err := s.connect(conn)
 	if err != nil {
 		return err
 	}
@@ -393,11 +402,11 @@ type ExportData struct {
 }
 
 // Export 导出数据
-func (s *RedisService) Export(keys []string) (*ExportData, error) {
+func (s *RedisService) Export(conn *store.Connection, keys []string) (*ExportData, error) {
 	var keyInfos []KeyInfo
 
 	for _, key := range keys {
-		info, err := s.GetKey(key)
+		info, err := s.GetKey(conn, key)
 		if err != nil {
 			continue
 		}
@@ -408,7 +417,7 @@ func (s *RedisService) Export(keys []string) (*ExportData, error) {
 }
 
 // Import 导入数据
-func (s *RedisService) Import(data *ExportData) error {
+func (s *RedisService) Import(conn *store.Connection, data *ExportData) error {
 	for _, keyInfo := range data.Keys {
 		req := &SetKeyRequest{
 			Key:   keyInfo.Key,
@@ -416,7 +425,7 @@ func (s *RedisService) Import(data *ExportData) error {
 			Value: keyInfo.Value,
 			TTL:   keyInfo.TTL,
 		}
-		if err := s.SetKey(req); err != nil {
+		if err := s.SetKey(conn, req); err != nil {
 			return err
 		}
 	}
@@ -424,8 +433,8 @@ func (s *RedisService) Import(data *ExportData) error {
 }
 
 // ExportJSON 导出为 JSON 字符串
-func (s *RedisService) ExportJSON(keys []string) (string, error) {
-	data, err := s.Export(keys)
+func (s *RedisService) ExportJSON(conn *store.Connection, keys []string) (string, error) {
+	data, err := s.Export(conn, keys)
 	if err != nil {
 		return "", err
 	}
@@ -439,12 +448,21 @@ func (s *RedisService) ExportJSON(keys []string) (string, error) {
 }
 
 // ImportJSON 从 JSON 导入
-func (s *RedisService) ImportJSON(jsonStr string) error {
+func (s *RedisService) ImportJSON(conn *store.Connection, jsonStr string) error {
 	var data ExportData
 	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
 		return err
 	}
 
-	return s.Import(&data)
+	return s.Import(conn, &data)
 }
 
+// TestConnection 测试连接是否有效
+func (s *RedisService) TestConnection(conn *store.Connection) error {
+	client, err := s.connect(conn)
+	if err != nil {
+		return err
+	}
+	defer client.Close()
+	return nil
+}
