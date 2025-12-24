@@ -62,82 +62,24 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+			// 清空密码字段以保护安全
+			for i := range connections {
+				connections[i].Password = ""
+			}
 			c.JSON(http.StatusOK, connections)
 		})
 
-		// 获取单个连接
-		api.GET("/connections/:id", func(c *gin.Context) {
-			id := c.Param("id")
-			idInt, err := strconv.ParseInt(id, 10, 64)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
-				return
-			}
-			conn, err := db.GetConnectionByID(idInt)
-			if err != nil {
-				c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
-				return
-			}
-			c.JSON(http.StatusOK, conn)
-		})
-
-		// 创建连接
-		api.POST("/connections", func(c *gin.Context) {
-			var conn store.Connection
-			if err := c.ShouldBindJSON(&conn); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			if err := db.CreateConnection(&conn); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			c.JSON(http.StatusCreated, conn)
-		})
-
-		// 更新连接
-		api.PUT("/connections/:id", func(c *gin.Context) {
-			id := c.Param("id")
-			idInt, err := strconv.ParseInt(id, 10, 64)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
-				return
-			}
-			var conn store.Connection
-			if err := c.ShouldBindJSON(&conn); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			conn.ID = idInt
-			if err := db.UpdateConnection(&conn); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			c.JSON(http.StatusOK, conn)
-		})
-
-		// 删除连接
-		api.DELETE("/connections/:id", func(c *gin.Context) {
-			id := c.Param("id")
-			idInt, err := strconv.ParseInt(id, 10, 64)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
-				return
-			}
-			if err := db.DeleteConnection(idInt); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
-		})
-
-		// 测试连接
+		// 测试连接（必须在 :id 路由之前）
 		api.POST("/connections/test", func(c *gin.Context) {
 			var conn store.Connection
 			if err := c.ShouldBindJSON(&conn); err != nil {
 				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 				return
 			}
+
+			// Debug: log received connection info (without password for security)
+			log.Printf("Testing connection: type=%s, host=%s, port=%d, username=%s, password_length=%d",
+				conn.Type, conn.Host, conn.Port, conn.Username, len(conn.Password))
 
 			var testErr error
 			switch conn.Type {
@@ -157,7 +99,7 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 			c.JSON(http.StatusOK, gin.H{"success": true, "message": "connection successful"})
 		})
 
-		// 按类型获取连接
+		// 按类型获取连接（必须在 :id 路由之前）
 		api.GET("/connections/types/:type", func(c *gin.Context) {
 			connType := c.Param("type")
 			connections, err := db.GetConnectionsByType(connType)
@@ -165,7 +107,90 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 				return
 			}
+			// 清空密码字段以保护安全
+			for i := range connections {
+				connections[i].Password = ""
+			}
 			c.JSON(http.StatusOK, connections)
+		})
+
+		// 创建连接
+		api.POST("/connections", func(c *gin.Context) {
+			var conn store.Connection
+			if err := c.ShouldBindJSON(&conn); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			if err := db.CreateConnection(&conn); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			// 清空密码字段
+			conn.Password = ""
+			c.JSON(http.StatusCreated, conn)
+		})
+
+		// 获取单个连接
+		api.GET("/connections/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			idInt, err := strconv.ParseInt(id, 10, 64)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+				return
+			}
+			conn, err := db.GetConnectionByID(idInt)
+			if err != nil {
+				c.JSON(http.StatusNotFound, gin.H{"error": "connection not found"})
+				return
+			}
+			// 清空密码字段
+			conn.Password = ""
+			c.JSON(http.StatusOK, conn)
+		})
+
+		// 更新连接
+		api.PUT("/connections/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			idInt, err := strconv.ParseInt(id, 10, 64)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+				return
+			}
+			var conn store.Connection
+			if err := c.ShouldBindJSON(&conn); err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+				return
+			}
+			conn.ID = idInt
+			// 如果密码为空，从数据库获取原密码
+			if conn.Password == "" {
+				existingConn, err := db.GetConnectionByID(idInt)
+				if err == nil {
+					conn.Password = existingConn.Password
+				}
+			}
+			if err := db.UpdateConnection(&conn); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			// 清空密码字段
+			conn.Password = ""
+			c.JSON(http.StatusOK, conn)
+		})
+
+		// 删除连接
+		api.DELETE("/connections/:id", func(c *gin.Context) {
+			id := c.Param("id")
+			idInt, err := strconv.ParseInt(id, 10, 64)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+				return
+			}
+			if err := db.DeleteConnection(idInt); err != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+				return
+			}
+			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
 		})
 
 		// ==================== 历史和收藏 API ====================

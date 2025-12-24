@@ -47,7 +47,7 @@ const testResult = ref<{ success: boolean; error?: string } | null>(null)
 const formModel = ref<Connection>({
   name: '',
   type: 'mysql',
-  host: 'localhost',
+  host: '127.0.0.1',
   port: 3306,
   username: '',
   password: '',
@@ -127,7 +127,7 @@ function openAddModal(type?: string) {
   formModel.value = {
     name: '',
     type: (type as Connection['type']) || 'mysql',
-    host: 'localhost',
+    host: '127.0.0.1',
     port: defaultPorts[type || 'mysql'],
     username: '',
     password: '',
@@ -343,7 +343,7 @@ onMounted(() => {
         </NFormItem>
 
         <NFormItem label="主机地址" path="host">
-          <NInput v-model:value="formModel.host" placeholder="localhost 或 IP 地址" />
+          <NInput v-model:value="formModel.host" placeholder="127.0.0.1 或 IP 地址" />
         </NFormItem>
 
         <NFormItem label="端口" path="port">

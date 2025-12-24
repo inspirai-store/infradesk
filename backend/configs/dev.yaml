@@ -6,28 +6,29 @@ sqlite:
   path: ./data/zeni-x.db
 
 mysql:
-  host: localhost
+  host: 127.0.0.1
   port: 3306
   user: root
   password: "root123"
   database: ""
 
 redis:
-  host: localhost
+  host: 127.0.0.1
   port: 6379
   password: ""
   db: 0
 
 mongodb:
-  host: localhost
+  host: 127.0.0.1
   port: 27017
   user: admin
   password: "admin123"
   database: ""
 
 minio:
-  endpoint: localhost:9000
+  endpoint: 127.0.0.1:9000
   access_key: minioadmin
   secret_key: "minioadmin123"
   use_ssl: false
+
 

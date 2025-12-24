@@ -109,7 +109,7 @@ type Connection struct {
 	Host         string `json:"host"`
 	Port         int    `json:"port"`
 	Username     string `json:"username,omitempty"`
-	Password     string `json:"-"`
+	Password     string `json:"password,omitempty"` // 允许接收密码，但在返回时需要手动清空
 	DatabaseName string `json:"database_name,omitempty"`
 	IsDefault    bool   `json:"is_default"`
 	CreatedAt    string `json:"created_at"`
