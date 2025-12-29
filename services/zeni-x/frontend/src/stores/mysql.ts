@@ -57,6 +57,10 @@ export const useMySQLStore = defineStore('mysql', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
   const users = ref<UserInfo[]>([])
+  // 记录哪些数据库已经加载过表信息
+  const fetchedDatabases = ref<Set<string>>(new Set())
+  // 按数据库缓存表信息
+  const tablesCache = ref<Map<string, Table[]>>(new Map())
 
   async function fetchServerInfo() {
     try {
@@ -136,17 +140,33 @@ export const useMySQLStore = defineStore('mysql', () => {
     }
   }
 
-  async function fetchTables(database: string) {
+  async function fetchTables(database: string, forceRefresh = false) {
+    // 如果已经加载过且不是强制刷新，使用缓存
+    if (!forceRefresh && fetchedDatabases.value.has(database)) {
+      currentDatabase.value = database
+      tables.value = tablesCache.value.get(database) || []
+      return
+    }
+
     loading.value = true
     currentDatabase.value = database
     try {
       const response = await mysqlApi.listTables(database)
-      tables.value = response.data || []
+      const tableList = response.data || []
+      tables.value = tableList
+      // 缓存结果
+      fetchedDatabases.value.add(database)
+      tablesCache.value.set(database, tableList)
     } catch (e) {
       error.value = (e as Error).message
     } finally {
       loading.value = false
     }
+  }
+
+  // 检查数据库是否已加载过表信息
+  function hasFetchedTables(database: string): boolean {
+    return fetchedDatabases.value.has(database)
   }
 
   async function fetchTableSchema(database: string, table: string) {
@@ -202,6 +222,7 @@ export const useMySQLStore = defineStore('mysql', () => {
     dropTable,
     setCurrentDatabase,
     setCurrentTable,
+    hasFetchedTables,
   }
 })
 

@@ -51,15 +51,26 @@ func (h *MySQLHandler) getConnection(c *gin.Context) (*store.Connection, error) 
 		// 检查端口转发是否已存在且活跃
 		if conn.ForwardID != "" {
 			forward, err := h.pfManager.GetForward(conn.ForwardID)
-			if err == nil && forward.Status == k8s.StatusActive {
-				// 端口转发活跃，更新最后使用时间
-				h.pfManager.UpdateLastUsed(conn.ForwardID)
-				return conn, nil
+			if err == nil {
+				if forward.Status == k8s.StatusActive {
+					// 端口转发活跃，更新最后使用时间
+					h.pfManager.UpdateLastUsed(conn.ForwardID)
+					log.Printf("✅ Reusing existing port forward %s for connection %d (local port: %d)",
+						conn.ForwardID, conn.ID, forward.LocalPort)
+					return conn, nil
+				} else {
+					log.Printf("⚠️  Existing forward %s found but status is %s (not active)",
+						conn.ForwardID, forward.Status)
+				}
+			} else {
+				log.Printf("⚠️  Failed to get existing forward %s: %v", conn.ForwardID, err)
 			}
+		} else {
+			log.Printf("ℹ️  No existing forward ID found in connection %d, will create new one", conn.ID)
 		}
-		
+
 		// 需要创建或重新创建端口转发
-		log.Printf("Creating port forward for connection %d (%s/%s)", 
+		log.Printf("🔧 Creating port forward for connection %d (%s/%s)",
 			conn.ID, conn.K8sNamespace, conn.K8sServiceName)
 		
 		var kubeconfig, k8sContext string
@@ -86,7 +97,9 @@ func (h *MySQLHandler) getConnection(c *gin.Context) (*store.Connection, error) 
 		if err != nil {
 			return nil, fmt.Errorf("failed to create port forward: %w", err)
 		}
-		
+
+		log.Printf("✅ Port forward created successfully: ID=%s, LocalPort=%d", forward.ID, forward.LocalPort)
+
 		// 更新连接信息
 		conn.ForwardID = forward.ID
 		conn.ForwardLocalPort = forward.LocalPort

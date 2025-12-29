@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"sync"
@@ -74,13 +75,23 @@ func (m *PortForwardManager) CreateForward(ctx context.Context, connectionID int
 
 	// 检查是否已存在相同的转发
 	for _, fwd := range m.forwards {
-		if fwd.ConnectionID == connectionID && fwd.Namespace == namespace && 
+		if fwd.ConnectionID == connectionID && fwd.Namespace == namespace &&
 		   fwd.ServiceName == serviceName && fwd.RemotePort == remotePort {
-			// 如果提供了新的 kubeconfig，可能需要重新验证，但这里简单处理，假设连接 ID 一致则配置一致
-			fwd.LastUsedAt = time.Now()
-			return fwd, nil
+			// 检查转发状态，只有活跃的转发才能复用
+			if fwd.Status == StatusActive {
+				fwd.LastUsedAt = time.Now()
+				log.Printf("♻️  Reusing existing active forward %s for connection %d (local port: %d)",
+					fwd.ID, connectionID, fwd.LocalPort)
+				return fwd, nil
+			} else {
+				log.Printf("⚠️  Found existing forward %s for connection %d but status is %s, creating new one",
+					fwd.ID, connectionID, fwd.Status)
+			}
 		}
 	}
+
+	log.Printf("🔧 Creating new port forward for connection %d (%s/%s:%d)",
+		connectionID, namespace, serviceName, remotePort)
 
 	// 创建 K8s 客户端
 	k8sClient, err := NewClientWithConfig(kubeconfigContent, context)
@@ -144,8 +155,18 @@ func (m *PortForwardManager) CreateForward(ctx context.Context, connectionID int
 	// 等待就绪或超时
 	select {
 	case <-forward.ReadyChan:
-		// 端口转发已就绪
-	case <-time.After(15 * time.Second): // 稍微增加超时时间
+		// 端口转发已就绪，验证端口是否真的可用
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", localPort), 3*time.Second)
+		if err != nil {
+			forward.Status = StatusError
+			forward.ErrorMessage = fmt.Sprintf("Port forward ready but connection test failed: %v", err)
+			return nil, fmt.Errorf("port forward ready but connection test failed: %w", err)
+		}
+		conn.Close()
+
+		log.Printf("✅ Port forward created and verified: ID=%s, LocalPort=%d, RemotePort=%d",
+			forward.ID, localPort, remotePort)
+	case <-time.After(15 * time.Second):
 		return nil, fmt.Errorf("timeout waiting for port forward to be ready")
 	}
 
@@ -272,12 +293,19 @@ func (m *PortForwardManager) CleanupIdle() int {
 	now := time.Now()
 
 	for id, forward := range m.forwards {
-		if now.Sub(forward.LastUsedAt) > m.idleTimeout {
+		idleTime := now.Sub(forward.LastUsedAt)
+		if idleTime > m.idleTimeout {
+			log.Printf("🧹 Cleaning up idle forward: %s (service: %s/%s, last used: %s ago)",
+				id, forward.Namespace, forward.ServiceName, idleTime.Round(time.Second))
 			close(forward.StopChan)
 			delete(m.usedPorts, forward.LocalPort)
 			delete(m.forwards, id)
 			cleaned++
 		}
+	}
+
+	if cleaned > 0 {
+		log.Printf("🧹 Cleaned up %d idle port forward(s)", cleaned)
 	}
 
 	return cleaned
@@ -289,18 +317,22 @@ func (m *PortForwardManager) HealthCheck() {
 	defer m.mu.Unlock()
 
 	for _, forward := range m.forwards {
-		// 尝试连接本地端口
-		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", forward.LocalPort), 2*time.Second)
+		// 尝试连接本地端口，使用更长的超时时间
+		conn, err := net.DialTimeout("tcp", fmt.Sprintf("localhost:%d", forward.LocalPort), 5*time.Second)
 		if err != nil {
 			if forward.Status != StatusError {
 				forward.Status = StatusError
 				forward.ErrorMessage = fmt.Sprintf("Health check failed: %v", err)
+				log.Printf("⚠️  Health check failed for forward %s (port %d): %v",
+					forward.ID, forward.LocalPort, err)
 			}
 		} else {
 			conn.Close()
 			if forward.Status == StatusError {
 				forward.Status = StatusActive
 				forward.ErrorMessage = ""
+				log.Printf("✅ Health check recovered for forward %s (port %d)",
+					forward.ID, forward.LocalPort)
 			}
 		}
 	}

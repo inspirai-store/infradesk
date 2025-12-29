@@ -17,7 +17,6 @@ import {
   NCheckboxGroup,
   NSelect,
   NFormItem,
-  NFormGroup,
   NSwitch,
 } from 'naive-ui'
 import {
@@ -48,6 +47,7 @@ const showAlterDialog = ref(false)
 const showGrantDialog = ref(false)
 const alterDatabaseName = ref('')
 const grantDatabaseName = ref('')
+const refreshingDatabases = ref<Set<string>>(new Set())
 
 // Create database form state
 const createForm = ref<CreateDatabaseRequest>({
@@ -107,6 +107,20 @@ const collateOptions = [
   { label: 'latin1_general_ci', value: 'latin1_general_ci' },
 ]
 
+// 刷新单个数据库的表
+async function refreshDatabaseTables(dbName: string, event: Event) {
+  event.stopPropagation()
+  refreshingDatabases.value.add(dbName)
+  try {
+    await store.fetchTables(dbName, true) // 强制刷新
+    message.success(`已刷新 "${dbName}"`)
+  } catch (e) {
+    message.error(`刷新失败: ${(e as Error).message}`)
+  } finally {
+    refreshingDatabases.value.delete(dbName)
+  }
+}
+
 const treeData = computed<TreeOption[]>(() => {
   const filtered = store.databases.filter(db =>
     db.name.toLowerCase().includes(searchValue.value.toLowerCase())
@@ -115,7 +129,19 @@ const treeData = computed<TreeOption[]>(() => {
   return filtered.map(db => ({
     key: db.name,
     label: db.name,
-    prefix: () => h(NIcon, { color: '#00758F', size: 14 }, { default: () => h(ServerOutline) }),
+    prefix: () => h('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } }, [
+      h(NIcon, { color: '#00758F', size: 14 }, { default: () => h(ServerOutline) }),
+      // 如果已经加载过表，显示刷新按钮
+      store.hasFetchedTables(db.name) ? h(NButton, {
+        size: 'tiny',
+        quaternary: true,
+        loading: refreshingDatabases.value.has(db.name),
+        onClick: (e: Event) => refreshDatabaseTables(db.name, e),
+        style: { marginLeft: '4px', opacity: 0.6 }
+      }, {
+        icon: () => h(NIcon, { size: 12 }, { default: () => h(RefreshOutline) })
+      }) : null,
+    ]),
     children: store.currentDatabase === db.name ?
       store.tables.map(table => ({
         key: `${db.name}/${table.name}`,
@@ -155,6 +181,7 @@ async function handleExpand(keys: string[]) {
 
   for (const key of keys) {
     if (!key.includes('/') && key !== store.currentDatabase) {
+      // fetchTables 会自动处理缓存，只有首次加载才会请求
       await store.fetchTables(key)
     }
   }
