@@ -1,65 +1,24 @@
-# Prod 环境配置
+namespace: zeni-x-prod
 
-# 全局配置
 global:
+  imageRegistry: registry.cn-hangzhou.aliyuncs.com
   environment: prod
-  clusterType: prod  # dev | prod
 
-# 镜像配置
-image:
+frontend:
+  image:
+    tag: stable
+
+backend:
+  image:
+    tag: stable
+
+service:
   frontend:
-    repository: yunizeni-registry.cn-shenzhen.cr.aliyuncs.com/yunizeni/zeni-x-frontend
-    tag: prod
-    pullPolicy: IfNotPresent
+    nodePort: 30380
   backend:
-    repository: yunizeni-registry.cn-shenzhen.cr.aliyuncs.com/yunizeni/zeni-x-backend
-    tag: prod
-    pullPolicy: IfNotPresent
+    nodePort: 30388
 
-# Namespace 配置
-namespace:
-  name: zeni-x-prod
-  create: true
-  labels:
-    app: zeni-x
-    environment: prod
-
-# 副本数
-replicaCount: 2
-
-# 容器资源配置 - 生产环境增加资源
-containers:
-  frontend:
-    resources:
-      requests:
-        memory: "128Mi"
-        cpu: "100m"
-      limits:
-        memory: "256Mi"
-        cpu: "200m"
-  backend:
-    resources:
-      requests:
-        memory: "256Mi"
-        cpu: "200m"
-      limits:
-        memory: "512Mi"
-        cpu: "500m"
-
-# Ingress 配置 - 使用 AWS ALB (prod 集群)
 ingress:
-  enabled: true
-  annotations:
-    alb.ingress.kubernetes.io/scheme: internet-facing
-    alb.ingress.kubernetes.io/target-type: ip
-    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
-    alb.ingress.kubernetes.io/ssl-redirect: "443"
+  className: alb
   hosts:
-    - host: zeni-x.example.com
-      paths:
-        - path: /
-          pathType: Prefix
-          service: http
-        - path: /api
-          pathType: Prefix
-          service: api
+    - host: zeni-x.yunizeni.com

@@ -15,7 +15,7 @@
 |------|------|
 | 前端 | Vue.js 3 + TypeScript + Naive UI + Vite |
 | 后端 | Go + Gin + SQLite |
-| 部署 | K8s + Kustomize |
+| 部署 | K8s + Helm |
 
 ## 快速开始
 
@@ -69,9 +69,12 @@ zeni-x/
 │   └── zeni-x/
 │       ├── frontend/     # Vue.js 前端
 │       └── backend/      # Go 后端
-├── k8s/                  # K8s 配置（kustomize）
-│   ├── base/
-│   └── overlays/
+├── helm/                 # Helm Charts
+│   └── zeni-x/
+│       ├── Chart.yaml    # Chart 元数据
+│       ├── values.yaml   # 默认配置
+│       ├── values-*.yaml # 环境配置
+│       └── templates/    # K8s 资源模板
 ├── config/               # 配置文件
 │   ├── env/
 │   └── backend/
@@ -80,10 +83,27 @@ zeni-x/
 
 ## 配置
 
-环境变量通过 K8s Secrets 注入：
+### 敏感信息配置
 
-- `MYSQL_ROOT_PASSWORD`: MySQL root 密码
-- `REDIS_PASSWORD`: Redis 密码
+首次部署前，需要创建各环境的敏感配置文件：
+
+```bash
+# 创建测试环境敏感配置
+cp helm/zeni-x/values-test.secret.example helm/zeni-x/values-test.secret.yaml
+vim helm/zeni-x/values-test.secret.yaml
+
+# 创建 UAT 环境敏感配置
+cp helm/zeni-x/values-uat.secret.example helm/zeni-x/values-uat.secret.yaml
+vim helm/zeni-x/values-uat.secret.yaml
+```
+
+### 环境变量
+
+应用配置通过 Helm values 文件管理，敏感信息通过 K8s Secrets 注入：
+
+- `DATABASE_PASSWORD`: 数据库密码
+- `API_KEY`: API 密钥
+- `REDIS_PASSWORD`: Redis 密码（可选）
 
 ## License
 

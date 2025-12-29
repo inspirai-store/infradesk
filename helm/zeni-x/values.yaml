@@ -1,148 +1,108 @@
+# Default values for zeni-x Helm Chart
+# This file contains all default configuration values that are common across all environments.
+# Environment-specific overrides should be placed in values-{env}.yaml files.
+
+# 命名空间配置
+namespace: zeni-x
+
 # 全局配置
 global:
+  # 镜像仓库（可通过环境 values 文件覆盖）
+  imageRegistry: registry.local
+  # 环境标识
   environment: dev
-  clusterType: dev  # dev | prod
 
-# 镜像配置
-image:
-  frontend:
-    repository: registry.local/zeni-x-frontend
+# 前端配置
+frontend:
+  enabled: true
+  image:
+    repository: zeni-x-frontend
     tag: latest
     pullPolicy: IfNotPresent
-  backend:
-    repository: registry.local/zeni-x-backend
+  replicas: 1
+  resources:
+    requests:
+      memory: 64Mi
+      cpu: 50m
+    limits:
+      memory: 128Mi
+      cpu: 100m
+  containerPort: 80
+  livenessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /
+      port: http
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# 后端配置
+backend:
+  enabled: true
+  image:
+    repository: zeni-x-backend
     tag: latest
     pullPolicy: IfNotPresent
-
-# Namespace 配置
-namespace:
-  name: zeni-x
-  create: true
-  labels:
-    app: zeni-x
-    environment: dev
-
-# 副本数
-replicaCount: 1
-
-# Pod 配置
-pod:
-  annotations: {}
-  labels: {}
-  securityContext: {}
-
-# 容器配置
-containers:
-  frontend:
-    securityContext: {}
-    resources:
-      requests:
-        memory: "64Mi"
-        cpu: "50m"
-      limits:
-        memory: "128Mi"
-        cpu: "100m"
-    livenessProbe:
-      httpGet:
-        path: /
-        port: http
-      initialDelaySeconds: 5
-      periodSeconds: 10
-    readinessProbe:
-      httpGet:
-        path: /
-        port: http
-      initialDelaySeconds: 3
-      periodSeconds: 5
-
-  backend:
-    securityContext: {}
-    resources:
-      requests:
-        memory: "128Mi"
-        cpu: "100m"
-      limits:
-        memory: "256Mi"
-        cpu: "200m"
-    livenessProbe:
-      httpGet:
-        path: /health
-        port: api
-      initialDelaySeconds: 10
-      periodSeconds: 10
-    readinessProbe:
-      httpGet:
-        path: /ready
-        port: api
-      initialDelaySeconds: 5
-      periodSeconds: 5
-    env: []
-    envFrom: []
+  replicas: 1
+  resources:
+    requests:
+      memory: 128Mi
+      cpu: 100m
+    limits:
+      memory: 256Mi
+      cpu: 200m
+  containerPort: 8080
+  env:
+    - name: LOG_LEVEL
+      value: "info"
+  livenessProbe:
+    httpGet:
+      path: /health
+      port: api
+    initialDelaySeconds: 30
+    periodSeconds: 10
+  readinessProbe:
+    httpGet:
+      path: /ready
+      port: api
+    initialDelaySeconds: 5
+    periodSeconds: 5
 
 # Service 配置
 service:
-  type: ClusterIP
-  ports:
-    http:
-      port: 80
-      targetPort: 80
-      protocol: TCP
-      name: http
-    api:
-      port: 8080
-      targetPort: 8080
-      protocol: TCP
-      name: api
+  type: NodePort
+  frontend:
+    port: 80
+    targetPort: http
+    nodePort: 30080
+  backend:
+    port: 8080
+    targetPort: api
+    nodePort: 30088
 
 # Ingress 配置
 ingress:
   enabled: true
-  className: ""  # 根据集群类型动态设置
+  className: traefik
   annotations: {}
   hosts:
     - host: zeni-x.local
       paths:
         - path: /
           pathType: Prefix
-          service: http
-        - path: /api
-          pathType: Prefix
-          service: api
   tls: []
-
-# ConfigMap 配置
-configmap:
-  enabled: true
-  data:
-    SERVER_PORT: "8080"
-    SERVER_MODE: "release"
-    SQLITE_PATH: "/data/zeni-x.db"
-    MYSQL_HOST: "mysql.dev-services.svc.cluster.local"
-    MYSQL_PORT: "3306"
-    MYSQL_USER: "root"
-    REDIS_HOST: "redis.dev-services.svc.cluster.local"
-    REDIS_PORT: "6379"
-    REDIS_DB: "0"
-
-# Secret 配置
-secret:
-  enabled: true
-  create: true
-  name: zeni-x-secrets
-  # 敏感数据建议使用外部 Secret 管理系统
-  # 示例:
-  # MYSQL_ROOT_PASSWORD: your-password
-  # REDIS_PASSWORD: your-password
-  data: {}
 
 # PVC 配置
 persistence:
   enabled: true
-  existingClaim: ""
   storageClass: ""
   accessMode: ReadWriteOnce
   size: 1Gi
-  mountPath: /data
 
 # RBAC 配置
 rbac:
@@ -151,67 +111,39 @@ rbac:
     create: true
     name: zeni-x-reader
   role:
-    rules: []
+    rules:
+      - apiGroups: [""]
+        resources: ["pods", "services", "endpoints"]
+        verbs: ["get", "list", "watch"]
 
-# 节点选择器
-nodeSelector: {}
+# Secret 配置（通过 values-{env}.secret.yaml 提供）
+secret:
+  enabled: true
+  # 以下字段需要在 secret values 文件中提供
+  # 占位符，需要从 secret values 文件覆盖
+  databasePassword: ""
+  apiKey: ""
 
-# 亲和性配置
-affinity: {}
+# ConfigMap 配置
+configMap:
+  enabled: true
+  data:
+    CONFIG_ENV: "development"
+    DB_HOST: "mysql.dev-services.svc.cluster.local"
+    DB_PORT: "3306"
+    DB_NAME: "zeni_x"
 
-# 容忍配置
-tolerations: []
+# 初始化 Job 配置
+initJob:
+  enabled: false
+  image:
+    repository: zeni-x-backend
+    tag: latest
+  command: ["/app/migrate"]
 
-# Job 配置
-jobs:
-  # 数据库初始化 Job
-  initDb:
-    enabled: false
-    image:
-      repository: registry.local/zeni-x-backend
-      tag: latest
-      pullPolicy: IfNotPresent
-    command: ["/zeni-x", "init-db"]
-    args: []
-    env: []
-    envFrom:
-      - configMapRef
-      - secretRef
-    resources:
-      requests:
-        memory: "128Mi"
-        cpu: "100m"
-      limits:
-        memory: "256Mi"
-        cpu: "200m"
-    # 使用 Helm hook 确保在应用启动前执行
-    annotations:
-      "helm.sh/hook": pre-install,pre-upgrade
-      "helm.sh/hook-weight": "-5"
-      "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
-
-  # 数据库迁移 Job
-  migrateDb:
-    enabled: false
-    image:
-      repository: registry.local/zeni-x-backend
-      tag: latest
-      pullPolicy: IfNotPresent
-    command: ["/zeni-x", "migrate"]
-    args: []
-    env: []
-    envFrom:
-      - configMapRef
-      - secretRef
-    resources:
-      requests:
-        memory: "128Mi"
-        cpu: "100m"
-      limits:
-        memory: "256Mi"
-        cpu: "200m"
-    # 使用 Helm hook 确保在应用启动前执行
-    annotations:
-      "helm.sh/hook": pre-install,pre-upgrade
-      "helm.sh/hook-weight": "-3"
-      "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+# 部署策略
+strategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxSurge: 1
+    maxUnavailable: 0

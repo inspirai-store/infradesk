@@ -1,0 +1,22 @@
+# Sensitive values files
+*.secret.yaml
+values-*.secret.yaml
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Git
+.git/
+.gitignore
+
+# CI/CD
+.gitlab-ci.yml
+.github/

@@ -63,7 +63,7 @@ async function handleCreate() {
   }
   
   try {
-    await store.createDatabase(newDbName.value.trim())
+    await store.createDatabase({ name: newDbName.value.trim() })
     message.success(`数据库 "${newDbName.value}" 创建成功`)
     newDbName.value = ''
   } catch (e) {

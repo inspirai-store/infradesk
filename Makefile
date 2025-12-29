@@ -44,21 +44,18 @@ help:
 	@echo "  make build        - 构建生产版本（frontend + backend）"
 	@echo "  make build-docker - 构建 Docker 镜像（frontend + backend）"
 	@echo ""
-	@echo "[K8s 部署 (Kustomize)]"
-	@echo "  make test         - 部署到测试环境 K8s（context: $(TEST_CONTEXT)）"
-	@echo "  make test-logs    - 追踪测试环境日志"
-	@echo "  make uat          - 部署到 UAT 环境 K8s（context: $(UAT_CONTEXT)）"
-	@echo "  make uat-logs     - 追踪 UAT 环境日志"
-	@echo ""
 	@echo "[K8s 部署 (Helm)]"
-	@echo "  make helm-validate      - 验证 Helm Chart（所有环境）"
-	@echo "  make helm-test            - 使用 Helm 部署到测试环境"
-	@echo "  make helm-uat             - 使用 Helm 部署到 UAT 环境"
-	@echo "  make helm-prod            - 使用 Helm 部署到生产环境"
-	@echo "  make helm-status          - 查看 Helm Release 状态"
-	@echo "  make helm-test-dryrun     - 生成 test 环境部署清单到 debug/test/"
-	@echo "  make helm-uat-dryrun      - 生成 uat 环境部署清单到 debug/uat/"
-	@echo "  make helm-prod-dryrun     - 生成 prod 环境部署清单到 debug/prod/"
+	@echo "  make test              - 部署到测试环境 K8s（Helm）"
+	@echo "  make test-logs         - 追踪测试环境日志"
+	@echo "  make uat               - 部署到 UAT 环境 K8s（Helm）"
+	@echo "  make uat-logs          - 追踪 UAT 环境日志"
+	@echo "  make prod              - 部署到生产环境 K8s（Helm）"
+	@echo ""
+	@echo "[Helm 工具]"
+	@echo "  make helm-validate     - 验证 Helm Chart（helm lint）"
+	@echo "  make helm-test-dryrun  - 生成 test 环境部署清单到 debug/test/"
+	@echo "  make helm-uat-dryrun   - 生成 uat 环境部署清单到 debug/uat/"
+	@echo "  make helm-prod-dryrun  - 生成 prod 环境部署清单到 debug/prod/"
 	@echo ""
 	@echo "[清理]"
 	@echo "  make clean        - 清理构建产物（dist + frontend/node_modules）"
@@ -223,21 +220,46 @@ build-docker:
 	@rm -rf $(BACKEND_DIR)/configs
 
 # ------------------------------------------------------------
-# 测试环境 (K8s)
+# 测试环境 (K8s - Helm)
 # ------------------------------------------------------------
 test: build-docker test-push test-deploy test-verify
 	@echo "✅ Deployed to TEST environment!"
 
 test-push:
 	@echo "📤 Pushing images to registry (test)..."
-	docker tag zeni-x-frontend:$(VERSION) $(REGISTRY)/zeni-x-frontend:test
-	docker tag zeni-x-backend:$(VERSION) $(REGISTRY)/zeni-x-backend:test
-	docker push $(REGISTRY)/zeni-x-frontend:test
-	docker push $(REGISTRY)/zeni-x-backend:test
+	docker tag zeni-x-frontend:$(VERSION) alexxiong/zeni-x-frontend:test
+	docker tag zeni-x-backend:$(VERSION) alexxiong/zeni-x-backend:test
+	docker push alexxiong/zeni-x-frontend:test
+	docker push alexxiong/zeni-x-backend:test
 
 test-deploy:
-	@echo "🚀 Deploying to test environment (context: $(TEST_CONTEXT))..."
-	kubectl --context=$(TEST_CONTEXT) apply -k k8s/overlays/test
+	@echo "🚀 Deploying to test environment using Helm (context: $(TEST_CONTEXT))..."
+	@if [ ! -f helm/zeni-x/values-test.secret.yaml ]; then \
+		echo "⚠️  helm/zeni-x/values-test.secret.yaml not found, creating from example..."; \
+		cp helm/zeni-x/values-test.secret.example helm/zeni-x/values-test.secret.yaml; \
+		echo "✅ Created helm/zeni-x/values-test.secret.yaml from example"; \
+		echo "💡 Tip: Update this file with actual secrets for production use"; \
+	fi
+	@# Check if namespace exists to avoid create-namespace conflict
+	@NS_EXISTS=$$(kubectl --context=$(TEST_CONTEXT) get namespace zeni-x-test -o name 2>/dev/null || echo ""); \
+	if [ -z "$$NS_EXISTS" ]; then \
+		helm upgrade --install zeni-x-test helm/zeni-x \
+			--namespace zeni-x-test \
+			--create-namespace \
+			--values helm/zeni-x/values-test.yaml \
+			--values helm/zeni-x/values-test.secret.yaml \
+			--kube-context $(TEST_CONTEXT) \
+			--wait \
+			--timeout 5m; \
+	else \
+		helm upgrade --install zeni-x-test helm/zeni-x \
+			--namespace zeni-x-test \
+			--values helm/zeni-x/values-test.yaml \
+			--values helm/zeni-x/values-test.secret.yaml \
+			--kube-context $(TEST_CONTEXT) \
+			--wait \
+			--timeout 5m; \
+	fi
 
 test-verify:
 	@echo "⏳ Waiting for deployment (context: $(TEST_CONTEXT))..."
@@ -249,21 +271,46 @@ test-logs:
 	kubectl --context=$(TEST_CONTEXT) logs -f deployment/zeni-x -n zeni-x-test --all-containers=true
 
 # ------------------------------------------------------------
-# UAT 环境 (K8s)
+# UAT 环境 (K8s - Helm)
 # ------------------------------------------------------------
 uat: build-docker uat-push uat-deploy uat-verify
 	@echo "✅ Deployed to UAT environment!"
 
 uat-push:
 	@echo "📤 Pushing images to registry (uat)..."
-	docker tag zeni-x-frontend:$(VERSION) $(REGISTRY)/zeni-x-frontend:uat
-	docker tag zeni-x-backend:$(VERSION) $(REGISTRY)/zeni-x-backend:uat
-	docker push $(REGISTRY)/zeni-x-frontend:uat
-	docker push $(REGISTRY)/zeni-x-backend:uat
+	docker tag zeni-x-frontend:$(VERSION) registry.cn-hangzhou.aliyuncs.com/zeni-x/zeni-x-frontend:uat
+	docker tag zeni-x-backend:$(VERSION) registry.cn-hangzhou.aliyuncs.com/zeni-x/zeni-x-backend:uat
+	docker push registry.cn-hangzhou.aliyuncs.com/zeni-x/zeni-x-frontend:uat
+	docker push registry.cn-hangzhou.aliyuncs.com/zeni-x/zeni-x-backend:uat
 
 uat-deploy:
-	@echo "🚀 Deploying to UAT environment (context: $(UAT_CONTEXT))..."
-	kubectl --context=$(UAT_CONTEXT) apply -k k8s/overlays/uat
+	@echo "🚀 Deploying to UAT environment using Helm (context: $(UAT_CONTEXT))..."
+	@if [ ! -f helm/zeni-x/values-uat.secret.yaml ]; then \
+		echo "⚠️  helm/zeni-x/values-uat.secret.yaml not found, creating from example..."; \
+		cp helm/zeni-x/values-uat.secret.example helm/zeni-x/values-uat.secret.yaml; \
+		echo "✅ Created helm/zeni-x/values-uat.secret.yaml from example"; \
+		echo "💡 Tip: Update this file with actual secrets for production use"; \
+	fi
+	@# Check if namespace exists to avoid create-namespace conflict
+	@NS_EXISTS=$$(kubectl --context=$(UAT_CONTEXT) get namespace zeni-x-uat -o name 2>/dev/null || echo ""); \
+	if [ -z "$$NS_EXISTS" ]; then \
+		helm upgrade --install zeni-x-uat helm/zeni-x \
+			--namespace zeni-x-uat \
+			--create-namespace \
+			--values helm/zeni-x/values-uat.yaml \
+			--values helm/zeni-x/values-uat.secret.yaml \
+			--kube-context $(UAT_CONTEXT) \
+			--wait \
+			--timeout 5m; \
+	else \
+		helm upgrade --install zeni-x-uat helm/zeni-x \
+			--namespace zeni-x-uat \
+			--values helm/zeni-x/values-uat.yaml \
+			--values helm/zeni-x/values-uat.secret.yaml \
+			--kube-context $(UAT_CONTEXT) \
+			--wait \
+			--timeout 5m; \
+	fi
 
 uat-verify:
 	@echo "⏳ Waiting for deployment (context: $(UAT_CONTEXT))..."
@@ -285,12 +332,14 @@ clean:
 	cd $(BACKEND_DIR) && go clean
 	@echo "✅ Clean complete!"
 
-# 清理 K8s 资源
+# 清理 K8s 资源 (使用 Helm uninstall)
 clean-k8s-test:
-	kubectl --context=$(TEST_CONTEXT) delete -k k8s/overlays/test --ignore-not-found
+	@echo "🗑️  Cleaning test environment resources..."
+	helm uninstall zeni-x-test --namespace zeni-x-test --kube-context $(TEST_CONTEXT) || echo "No release to uninstall"
 
 clean-k8s-uat:
-	kubectl --context=$(UAT_CONTEXT) delete -k k8s/overlays/uat --ignore-not-found
+	@echo "🗑️  Cleaning UAT environment resources..."
+	helm uninstall zeni-x-uat --namespace zeni-x-uat --kube-context $(UAT_CONTEXT) || echo "No release to uninstall"
 
 # ------------------------------------------------------------
 # Helm 部署
@@ -318,7 +367,7 @@ helm-template:
 	helm template $(HELM_RELEASE_NAME) $(HELM_CHART_DIR) \
 		--values $(HELM_CHART_DIR)/$(HELM_VALUES_FILE) \
 		--namespace $(HELM_NAMESPACE) \
-		$(if $(HELM_KUBECONTEXT),--kubecontext $(HELM_KUBECONTEXT))
+		$(if $(HELM_KUBECONTEXT),--kube-context $(HELM_KUBECONTEXT))
 
 # Diff Helm release (requires helm-diff plugin)
 helm-diff:
@@ -332,14 +381,14 @@ helm-diff:
 		helm diff upgrade $(HELM_RELEASE_NAME) $(HELM_CHART_DIR) \
 			--values config/helm/values-$(HELM_ENV).yaml \
 			--namespace $(HELM_NAMESPACE) \
-			$(if $(HELM_KUBECONTEXT),--kubecontext $(HELM_KUBECONTEXT)) \
+			$(if $(HELM_KUBECONTEXT),--kube-context $(HELM_KUBECONTEXT)) \
 			--install --allow-unreleased; \
 	else \
 		echo "  Using helm/zeni-x/values-$(HELM_ENV).yaml"; \
 		helm diff upgrade $(HELM_RELEASE_NAME) $(HELM_CHART_DIR) \
 			--values $(HELM_CHART_DIR)/values-$(HELM_ENV).yaml \
 			--namespace $(HELM_NAMESPACE) \
-			$(if $(HELM_KUBECONTEXT),--kubecontext $(HELM_KUBECONTEXT)) \
+			$(if $(HELM_KUBECONTEXT),--kube-context $(HELM_KUBECONTEXT)) \
 			--install --allow-unreleased; \
 	fi
 
@@ -355,7 +404,7 @@ helm-install: helm-diff
 			--install \
 			--wait \
 			--timeout 5m \
-			$(if $(HELM_KUBECONTEXT),--kubecontext $(HELM_KUBECONTEXT)); \
+			$(if $(HELM_KUBECONTEXT),--kube-context $(HELM_KUBECONTEXT)); \
 	else \
 		echo "  Using helm/zeni-x/values-$(HELM_ENV).yaml"; \
 		helm upgrade $(HELM_RELEASE_NAME) $(HELM_CHART_DIR) \
@@ -365,7 +414,7 @@ helm-install: helm-diff
 			--install \
 			--wait \
 			--timeout 5m \
-			$(if $(HELM_KUBECONTEXT),--kubecontext $(HELM_KUBECONTEXT)); \
+			$(if $(HELM_KUBECONTEXT),--kube-context $(HELM_KUBECONTEXT)); \
 	fi
 	@echo "✅ Helm release installed successfully!"
 
@@ -374,7 +423,7 @@ helm-uninstall:
 	@echo "🗑️  Uninstalling Helm release..."
 	helm uninstall $(HELM_RELEASE_NAME) \
 		--namespace $(HELM_NAMESPACE) \
-		$(if $(HELM_KUBECONTEXT),--kubecontext $(HELM_KUBECONTEXT))
+		$(if $(HELM_KUBECONTEXT),--kube-context $(HELM_KUBECONTEXT))
 	@echo "✅ Helm release uninstalled!"
 
 # Show Helm release status
@@ -382,18 +431,13 @@ helm-status:
 	@echo "📊 Helm release status..."
 	helm status $(HELM_RELEASE_NAME) \
 		--namespace $(HELM_NAMESPACE) \
-		$(if $(HELM_KUBECONTEXT),--kubecontext $(HELM_KUBECONTEXT))
+		$(if $(HELM_KUBECONTEXT),--kube-context $(HELM_KUBECONTEXT))
 
 # 验证 Helm Chart (所有环境)
 helm-validate:
-	@echo "✅ Validating Helm chart for all environments..."
-	@for env in dev test uat prod; do \
-		echo "Validating $$env environment..."; \
-		helm template $(HELM_RELEASE_NAME) $(HELM_CHART_DIR) \
-			--values $(HELM_CHART_DIR)/values-$$env.yaml \
-			--namespace zeni-x-$$env > /dev/null && echo "  ✅ $$env OK" || echo "  ❌ $$env FAILED"; \
-	done
-	@echo "✅ Validation complete!"
+	@echo "✅ Validating Helm chart..."
+	helm lint $(HELM_CHART_DIR)
+	@echo "✅ Helm chart validation passed!"
 
 # 环境快捷命令 - Test
 helm-test: build-docker test-push

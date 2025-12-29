@@ -1,6 +1,6 @@
 apiVersion: v2
 name: zeni-x
-description: A Helm chart for Zeni-X database management platform
+description: Zeni-X Database Management Platform - A modern web-based database management tool
 type: application
 version: 1.0.0
 appVersion: "1.0.0"
@@ -8,8 +8,13 @@ keywords:
   - database
   - management
   - mysql
-  - redis
-home: https://github.com/yourorg/zeni-x
+  - sqlite
+  - web
+home: https://github.com/inspirai/InterComponent
 maintainers:
-  - name: Zeni-X Team
-    email: public@yunizeni.com
+  - name: Inspirai Team
+    email: dev@inspirai.com
+icon: https://raw.githubusercontent.com/inspirai/InterComponent/main/docs/logo.png
+annotations:
+  category: database
+  licenses: Apache-2.0

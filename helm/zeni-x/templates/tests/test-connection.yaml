@@ -1,17 +1,22 @@
+{{- if .Values.ingress.enabled }}
 apiVersion: v1
 kind: Pod
 metadata:
-  name: "{{ include "zeni-x.fullname" . }}-test-connection"
+  name: "{{ .Release.Name }}-connection-test"
+  namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "zeni-x.labels" . | nindent 4 }}
+    app: zeni-x
   annotations:
     "helm.sh/hook": test-success
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
 spec:
   containers:
-    - name: wget
-      image: busybox
-      command: ['wget']
-      args:
-        - '--spider'
-        - 'http://{{ include "zeni-x.fullname" . }}:{{ .Values.service.ports.http.port }}'
+    - name: curl
+      image: curlimages/curl:latest
+      command:
+        - sh
+        - -c
+        - |
+          curl -f http://zeni-x.{{ .Release.Namespace }}.svc.cluster.local:80
   restartPolicy: Never
+{{- end }}

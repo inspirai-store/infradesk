@@ -1,13 +1,12 @@
 <script setup lang="ts">
 import { onMounted, ref, h } from 'vue'
-import { NDataTable, NButton, NSpace, NInput, NTag, NIcon, useMessage, useDialog, NModal, NFormItem, NSwitch, type DataTableColumns } from 'naive-ui'
-import { AddOutline, RefreshOutline, PersonOutline, TrashOutline } from '@vicons/ionicons5'
+import { NDataTable, NButton, NSpace, NInput, NTag, NIcon, useMessage, NModal, NFormItem, type DataTableColumns } from 'naive-ui'
+import { AddOutline, RefreshOutline, PersonOutline } from '@vicons/ionicons5'
 import { useMySQLStore } from '@/stores/mysql'
 import type { UserInfo } from '@/api'
 
 const store = useMySQLStore()
 const message = useMessage()
-const dialog = useDialog()
 
 const showCreateDialog = ref(false)
 const createForm = ref({

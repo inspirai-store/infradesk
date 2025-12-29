@@ -1,60 +1,29 @@
 {{- if .Values.rbac.create }}
-{{- if .Values.rbac.serviceAccount.create }}
-apiVersion: v1
-kind: ServiceAccount
-metadata:
-  name: {{ include "zeni-x.serviceAccountName" . }}
-  namespace: {{ .Values.namespace.name }}
-  labels:
-    {{- include "zeni-x.labels" . | nindent 4 }}
-{{- end }}
-
----
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
-  name: {{ include "zeni-x.fullname" . }}-reader
-  labels:
-    {{- include "zeni-x.labels" . | nindent 4 }}
+  name: zeni-x-role
+  namespace: {{ .Values.namespace }}
 rules:
-  # Read services and endpoints to discover middleware
+{{- if .Values.rbac.role.rules }}
+{{- toYaml .Values.rbac.role.rules | nindent 0 }}
+{{- else }}
   - apiGroups: [""]
-    resources: ["services", "endpoints"]
-    verbs: ["get", "list"]
-
-  # Read namespaces to filter system namespaces
-  - apiGroups: [""]
-    resources: ["namespaces"]
-    verbs: ["get", "list"]
-
-  # Read secrets to retrieve credentials
-  - apiGroups: [""]
-    resources: ["secrets"]
-    verbs: ["get", "list"]
-
-  # Access pods for port forwarding
-  - apiGroups: [""]
-    resources: ["pods", "pods/portforward"]
-    verbs: ["get", "list", "create"]
-
-  # Custom rules from values
-  {{- if .Values.rbac.role.rules }}
-  {{- toYaml .Values.rbac.role.rules | nindent 2 }}
-  {{- end }}
-
+    resources: ["pods", "services", "endpoints"]
+    verbs: ["get", "list", "watch"]
+{{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
-  name: {{ include "zeni-x.fullname" . }}-reader
-  labels:
-    {{- include "zeni-x.labels" . | nindent 4 }}
+  name: zeni-x-rolebinding
+  namespace: {{ .Values.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: zeni-x-role
 subjects:
   - kind: ServiceAccount
-    name: {{ include "zeni-x.serviceAccountName" . }}
-    namespace: {{ .Values.namespace.name }}
-roleRef:
-  kind: ClusterRole
-  name: {{ include "zeni-x.fullname" . }}-reader
-  apiGroup: rbac.authorization.k8s.io
+    name: {{ .Values.rbac.serviceAccount.name | default "zeni-x-reader" }}
+    namespace: {{ .Values.namespace }}
 {{- end }}
