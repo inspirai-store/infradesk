@@ -22,6 +22,18 @@ build/
 .env.local
 .env.*.local
 
+# config/env (本地环境文件，不提交；模板可提交)
+config/env/.env.local
+config/env/.env.dev
+config/env/.env.test
+config/env/.env.*.local
+
+# 生成的 Helm 文件
+.generated/helm/
+
+# K8s secrets（各环境 secrets.yaml 不提交；只提交 k8s/secrets/secrets.example.yaml）
+k8s/overlays/**/secrets.yaml
+
 # Logs
 *.log
 npm-debug.log*
@@ -40,3 +52,6 @@ temp/
 # Test coverage
 coverage/
 .nyc_output/
+
+# Helm dry-run debug output
+debug/

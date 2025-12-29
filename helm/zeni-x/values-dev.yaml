@@ -1,0 +1,42 @@
+# Dev 环境配置
+
+# 全局配置
+global:
+  environment: dev
+  clusterType: dev  # dev | prod
+
+# 镜像配置 - 使用本地构建
+image:
+  frontend:
+    repository: zeni-x-frontend
+    tag: latest
+    pullPolicy: IfNotPresent
+  backend:
+    repository: zeni-x-backend
+    tag: latest
+    pullPolicy: IfNotPresent
+
+# Namespace 配置
+namespace:
+  name: zeni-x-dev
+  create: true
+  labels:
+    app: zeni-x
+    environment: dev
+
+# 副本数
+replicaCount: 1
+
+# Ingress 配置
+ingress:
+  enabled: true
+  annotations: {}
+  hosts:
+    - host: zeni-x-dev.local
+      paths:
+        - path: /
+          pathType: Prefix
+          service: http
+        - path: /api
+          pathType: Prefix
+          service: api

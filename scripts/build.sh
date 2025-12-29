@@ -10,18 +10,18 @@ NC='\033[0m' # No Color
 
 # Build frontend
 echo -e "${YELLOW}📦 Building frontend...${NC}"
-cd frontend
+cd services/zeni-x/frontend
 pnpm install
 pnpm build
-cd ..
+cd ../../..
 
 # Build backend
 echo -e "${YELLOW}📦 Building backend...${NC}"
-cd backend
-CGO_ENABLED=1 go build -o ../dist/zeni-x cmd/server/main.go
-cd ..
+cd services/zeni-x/backend
+CGO_ENABLED=1 go build -o ../../../dist/zeni-x cmd/server/main.go
+cd ../../..
 
 echo -e "${GREEN}✅ Build complete!${NC}"
-echo "Frontend: frontend/dist/"
+echo "Frontend: services/zeni-x/frontend/dist/"
 echo "Backend: dist/zeni-x"
 

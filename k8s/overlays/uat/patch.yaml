@@ -1,0 +1,93 @@
+# Namespace patch (matches the base Namespace name; overlay namespace transformer will rename it)
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zeni-x
+  labels:
+    app: zeni-x
+    environment: uat
+---
+# Service patch for UAT environment
+apiVersion: v1
+kind: Service
+metadata:
+  name: zeni-x
+  namespace: zeni-x
+spec:
+  ports:
+  - name: http
+    port: 80
+    targetPort: 80
+    nodePort: 30280
+  - name: api
+    port: 8080
+    targetPort: 8080
+    nodePort: 30288
+---
+# ConfigMap patch for UAT
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: zeni-x-config
+  namespace: zeni-x
+data:
+  SERVER_PORT: "8080"
+  SERVER_MODE: "release"
+  SQLITE_PATH: "/data/zeni-x.db"
+  MYSQL_HOST: "mysql.dev-services.svc.cluster.local"
+  MYSQL_PORT: "3306"
+  MYSQL_USER: "root"
+  REDIS_HOST: "redis.dev-services.svc.cluster.local"
+  REDIS_PORT: "6379"
+  REDIS_DB: "0"
+---
+# Deployment patch for UAT - higher resources
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zeni-x
+  namespace: zeni-x
+spec:
+  template:
+    spec:
+      containers:
+      - name: backend
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "200m"
+          limits:
+            memory: "512Mi"
+            cpu: "400m"
+---
+# Ingress patch for UAT (ALB)
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: zeni-x-ingress
+  namespace: zeni-x
+  annotations:
+    kubernetes.io/ingress.class: alb
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}]'
+spec:
+  rules:
+  - host: zeni-x.uat.yunizeni.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: zeni-x
+            port:
+              number: 80
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: zeni-x
+            port:
+              number: 8080
+

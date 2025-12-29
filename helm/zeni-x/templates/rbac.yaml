@@ -1,0 +1,60 @@
+{{- if .Values.rbac.create }}
+{{- if .Values.rbac.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "zeni-x.serviceAccountName" . }}
+  namespace: {{ .Values.namespace.name }}
+  labels:
+    {{- include "zeni-x.labels" . | nindent 4 }}
+{{- end }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "zeni-x.fullname" . }}-reader
+  labels:
+    {{- include "zeni-x.labels" . | nindent 4 }}
+rules:
+  # Read services and endpoints to discover middleware
+  - apiGroups: [""]
+    resources: ["services", "endpoints"]
+    verbs: ["get", "list"]
+
+  # Read namespaces to filter system namespaces
+  - apiGroups: [""]
+    resources: ["namespaces"]
+    verbs: ["get", "list"]
+
+  # Read secrets to retrieve credentials
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+
+  # Access pods for port forwarding
+  - apiGroups: [""]
+    resources: ["pods", "pods/portforward"]
+    verbs: ["get", "list", "create"]
+
+  # Custom rules from values
+  {{- if .Values.rbac.role.rules }}
+  {{- toYaml .Values.rbac.role.rules | nindent 2 }}
+  {{- end }}
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "zeni-x.fullname" . }}-reader
+  labels:
+    {{- include "zeni-x.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "zeni-x.serviceAccountName" . }}
+    namespace: {{ .Values.namespace.name }}
+roleRef:
+  kind: ClusterRole
+  name: {{ include "zeni-x.fullname" . }}-reader
+  apiGroup: rbac.authorization.k8s.io
+{{- end }}

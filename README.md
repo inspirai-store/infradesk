@@ -65,11 +65,16 @@ make uat
 ```
 zeni-x/
 ├── Makefile              # 构建入口
-├── frontend/             # Vue.js 前端
-├── backend/              # Go 后端
-├── deploy/               # 部署配置
-│   ├── docker/           # Docker Compose
-│   └── k8s/              # K8s 配置
+├── services/
+│   └── zeni-x/
+│       ├── frontend/     # Vue.js 前端
+│       └── backend/      # Go 后端
+├── k8s/                  # K8s 配置（kustomize）
+│   ├── base/
+│   └── overlays/
+├── config/               # 配置文件
+│   ├── env/
+│   └── backend/
 └── scripts/              # 辅助脚本
 ```
 

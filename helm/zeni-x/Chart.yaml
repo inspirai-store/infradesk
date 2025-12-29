@@ -1,0 +1,15 @@
+apiVersion: v2
+name: zeni-x
+description: A Helm chart for Zeni-X database management platform
+type: application
+version: 1.0.0
+appVersion: "1.0.0"
+keywords:
+  - database
+  - management
+  - mysql
+  - redis
+home: https://github.com/yourorg/zeni-x
+maintainers:
+  - name: Zeni-X Team
+    email: public@yunizeni.com

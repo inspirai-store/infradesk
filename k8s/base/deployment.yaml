@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: zeni-x
+  namespace: zeni-x
+  labels:
+    app: zeni-x
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: zeni-x
+  template:
+    metadata:
+      labels:
+        app: zeni-x
+    spec:
+      serviceAccountName: zeni-x-reader  # Use read-only ServiceAccount for K8s API access
+      containers:
+      # Frontend Nginx
+      - name: frontend
+        image: yunizeni-registry.cn-shenzhen.cr.aliyuncs.com/yunizeni/zeni-x-frontend:latest
+        ports:
+        - containerPort: 80
+          name: http
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 80
+          initialDelaySeconds: 3
+          periodSeconds: 5
+      
+      # Backend Go
+      - name: backend
+        image: yunizeni-registry.cn-shenzhen.cr.aliyuncs.com/yunizeni/zeni-x-backend:latest
+        ports:
+        - containerPort: 8080
+          name: api
+        envFrom:
+        - secretRef:
+            name: zeni-x-secrets
+        - configMapRef:
+            name: zeni-x-config
+        volumeMounts:
+        - name: sqlite-data
+          mountPath: /data
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      
+      volumes:
+      - name: sqlite-data
+        persistentVolumeClaim:
+          claimName: zeni-x-sqlite-pvc
+

@@ -1,0 +1,178 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Zeni-X Helm Chart Values",
+  "type": "object",
+  "required": ["global"],
+  "properties": {
+    "global": {
+      "type": "object",
+      "properties": {
+        "environment": {
+          "type": "string",
+          "enum": ["dev", "test", "uat", "prod"]
+        },
+        "clusterType": {
+          "type": "string",
+          "enum": ["dev", "prod"]
+        }
+      }
+    },
+    "image": {
+      "type": "object",
+      "properties": {
+        "frontend": {
+          "type": "object",
+          "properties": {
+            "repository": {"type": "string"},
+            "tag": {"type": "string"},
+            "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+          }
+        },
+        "backend": {
+          "type": "object",
+          "properties": {
+            "repository": {"type": "string"},
+            "tag": {"type": "string"},
+            "pullPolicy": {"type": "string", "enum": ["Always", "IfNotPresent", "Never"]}
+          }
+        }
+      }
+    },
+    "namespace": {
+      "type": "object",
+      "properties": {
+        "name": {"type": "string"},
+        "create": {"type": "boolean"},
+        "labels": {"type": "object"}
+      }
+    },
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "ingress": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "className": {"type": "string"},
+        "annotations": {"type": "object"},
+        "hosts": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "host": {"type": "string"},
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {"type": "string"},
+                    "pathType": {"type": "string"},
+                    "service": {"type": "string"}
+                  },
+                  "required": ["path", "pathType", "service"]
+                }
+              }
+            },
+            "required": ["host", "paths"]
+          }
+        },
+        "tls": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "hosts": {"type": "array", "items": {"type": "string"}},
+              "secretName": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
+    "service": {
+      "type": "object",
+      "properties": {
+        "type": {"type": "string", "enum": ["ClusterIP", "NodePort", "LoadBalancer"]},
+        "ports": {
+          "type": "object",
+          "properties": {
+            "http": {"type": "object"},
+            "api": {"type": "object"}
+          }
+        }
+      }
+    },
+    "configmap": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "data": {"type": "object"}
+      }
+    },
+    "secret": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "create": {"type": "boolean"},
+        "name": {"type": "string"},
+        "data": {"type": "object"}
+      }
+    },
+    "persistence": {
+      "type": "object",
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "existingClaim": {"type": "string"},
+        "storageClass": {"type": "string"},
+        "accessMode": {"type": "string"},
+        "size": {"type": "string"},
+        "mountPath": {"type": "string"}
+      }
+    },
+    "rbac": {
+      "type": "object",
+      "properties": {
+        "create": {"type": "boolean"},
+        "serviceAccount": {
+          "type": "object",
+          "properties": {
+            "create": {"type": "boolean"},
+            "name": {"type": "string"}
+          }
+        },
+        "role": {
+          "type": "object",
+          "properties": {
+            "rules": {"type": "array"}
+          }
+        }
+      }
+    },
+    "containers": {
+      "type": "object",
+      "properties": {
+        "frontend": {
+          "type": "object",
+          "properties": {
+            "resources": {"type": "object"},
+            "livenessProbe": {"type": "object"},
+            "readinessProbe": {"type": "object"},
+            "securityContext": {"type": "object"}
+          }
+        },
+        "backend": {
+          "type": "object",
+          "properties": {
+            "resources": {"type": "object"},
+            "livenessProbe": {"type": "object"},
+            "readinessProbe": {"type": "object"},
+            "env": {"type": "array"},
+            "envFrom": {"type": "array"},
+            "securityContext": {"type": "object"}
+          }
+        }
+      }
+    }
+  }
+}
