@@ -340,11 +340,39 @@ async function handleExport() {
 }
 
 function handlePageChange(newPage: number) {
+  if (hasModifications.value) {
+    dialog.warning({
+      title: '未保存的修改',
+      content: '当前页面有未保存的修改，切换页面将丢失这些修改。确定要继续吗？',
+      positiveText: '确定',
+      negativeText: '取消',
+      onPositiveClick: () => {
+        modifications.value.clear()
+        page.value = newPage
+        fetchData()
+      }
+    })
+    return
+  }
   page.value = newPage
   fetchData()
 }
 
 function handleRefresh() {
+  if (hasModifications.value) {
+    dialog.warning({
+      title: '未保存的修改',
+      content: '当前页面有未保存的修改，刷新将丢失这些修改。确定要继续吗？',
+      positiveText: '确定',
+      negativeText: '取消',
+      onPositiveClick: () => {
+        modifications.value.clear()
+        fetchData()
+        message.success('已刷新')
+      }
+    })
+    return
+  }
   fetchData()
   message.success('已刷新')
 }
@@ -371,6 +399,7 @@ onMounted(() => {
 watch([database, table], () => {
   if (database.value && table.value) {
     page.value = 1
+    modifications.value.clear()
     store.fetchTableSchema(database.value, table.value)
     fetchData()
   }
@@ -560,6 +589,14 @@ watch([database, table], () => {
 }
 
 .breadcrumb {
+  margin-bottom: 12px;
+}
+
+.action-bar-top {
+  padding: 8px 16px;
+  background: rgba(240, 160, 32, 0.1);
+  border: 1px solid rgba(240, 160, 32, 0.2);
+  border-radius: 4px;
   margin-bottom: 12px;
 }
 
