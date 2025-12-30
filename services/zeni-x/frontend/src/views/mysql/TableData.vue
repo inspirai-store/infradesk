@@ -92,11 +92,13 @@ function saveEdit() {
   const oldValue = rows.value[rowIndex][column]
   const newValue = editValue.value
   
+  // 如果值没有变化，直接取消编辑状态
   if (newValue === oldValue) {
     editingCell.value = null
     return
   }
   
+  // 仅在此时将修改放入待保存队列（Staging）
   const key = `${rowIndex}-${column}`
   modifications.value.set(key, { rowIndex, column, oldValue, newValue })
   editingCell.value = null
@@ -117,6 +119,42 @@ function revertCell(rowIndex: number, column: string) {
 function discardAllChanges() {
   modifications.value.clear()
   message.info('已放弃所有修改')
+}
+
+// 保存单行修改
+async function handleSaveRow(rowIndex: number) {
+  const pkCol = store.tableSchema?.columns.find(c => c.key === 'PRI')
+  if (!pkCol) {
+    message.error('无法保存：未找到主键')
+    return
+  }
+
+  const rowMods = Array.from(modifications.value.values()).filter(m => m.rowIndex === rowIndex)
+  if (rowMods.length === 0) return
+
+  const updates: Record<string, unknown> = {}
+  rowMods.forEach(m => { updates[m.column] = m.newValue })
+
+  const rowData = rows.value[rowIndex]
+  const pkValue = rowData[pkCol.name]
+
+  isSaving.value = true
+  try {
+    await mysqlApi.updateRecord(database.value, table.value, pkCol.name, pkValue, updates)
+    message.success('行保存成功')
+    
+    // 清除该行的修改追踪
+    rowMods.forEach(m => {
+      const key = `${m.rowIndex}-${m.column}`
+      modifications.value.delete(key)
+    })
+    
+    fetchData()
+  } catch (e) {
+    message.error((e as Error).message)
+  } finally {
+    isSaving.value = false
+  }
 }
 
 // 保存所有修改
@@ -199,17 +237,33 @@ const tableColumns = computed<DataTableColumns<Record<string, unknown>>>(() => {
       const val = row[col]
 
       if (isEditing) {
-        return h(NInput, {
-          size: 'tiny',
-          value: String(editValue.value ?? ''),
-          onUpdateValue: (v: string) => { editValue.value = v },
-          onBlur: saveEdit,
-          onKeyup: (e: KeyboardEvent) => {
-            if (e.key === 'Enter') saveEdit()
-            if (e.key === 'Escape') cancelEdit()
-          },
-          autofocus: true
-        })
+        return h('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } }, [
+          h(NInput, {
+            size: 'tiny',
+            value: String(editValue.value ?? ''),
+            onUpdateValue: (v: string) => { editValue.value = v },
+            onKeyup: (e: KeyboardEvent) => {
+              if (e.key === 'Enter') saveEdit()
+              if (e.key === 'Escape') cancelEdit()
+            },
+            autofocus: true,
+            style: { flex: 1 }
+          }),
+          h(NButton, {
+            size: 'tiny',
+            quaternary: true,
+            circle: true,
+            type: 'success',
+            onClick: (e: Event) => { e.stopPropagation(); saveEdit() }
+          }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(CheckmarkCircleOutline) }) }),
+          h(NButton, {
+            size: 'tiny',
+            quaternary: true,
+            circle: true,
+            type: 'error',
+            onClick: (e: Event) => { e.stopPropagation(); cancelEdit() }
+          }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(CloseCircleOutline) }) })
+        ])
       }
 
       if (isModified) {
@@ -242,21 +296,41 @@ const tableColumns = computed<DataTableColumns<Record<string, unknown>>>(() => {
   cols.push({
     title: '操作',
     key: 'actions',
-    width: 60,
+    width: 80,
     fixed: 'right',
-    render(row) {
-      return [
-        h(
-          NButton,
-          {
-            size: 'tiny',
-            type: 'error',
-            quaternary: true,
-            onClick: () => handleDeleteRow(row),
-          },
-          { icon: () => h(NIcon, { size: 14 }, { default: () => h(TrashOutline) }) }
-        ),
-      ]
+    render(row, index) {
+      const rowMods = Array.from(modifications.value.values()).filter(m => m.rowIndex === index)
+      const hasRowMods = rowMods.length > 0
+      
+      return h(NSpace, { size: 4, justify: 'center' }, {
+        default: () => [
+          hasRowMods && h(
+            NButton,
+            {
+              size: 'tiny',
+              type: 'primary',
+              quaternary: true,
+              circle: true,
+              loading: isSaving.value,
+              onClick: () => handleSaveRow(index),
+              title: '保存行修改'
+            },
+            { icon: () => h(NIcon, { size: 14 }, { default: () => h(SaveOutline) }) }
+          ),
+          h(
+            NButton,
+            {
+              size: 'tiny',
+              type: 'error',
+              quaternary: true,
+              circle: true,
+              onClick: () => handleDeleteRow(row),
+              title: '删除行'
+            },
+            { icon: () => h(NIcon, { size: 14 }, { default: () => h(TrashOutline) }) }
+          ),
+        ]
+      })
     },
   })
   
@@ -296,6 +370,7 @@ async function handleDeleteRow(row: Record<string, unknown>) {
         where[pkCol.name] = row[pkCol.name]
         await mysqlApi.deleteRow(database.value, table.value, where)
         message.success('删除成功')
+        modifications.value.clear()
         fetchData()
       } catch (e) {
         message.error((e as Error).message)
@@ -317,6 +392,7 @@ async function handleAddRow() {
     message.success('插入成功')
     showAddModal.value = false
     newRowData.value = {}
+    modifications.value.clear()
     fetchData()
   } catch (e) {
     message.error((e as Error).message)
@@ -418,37 +494,25 @@ watch([database, table], () => {
     <NTabs type="line" animated size="small">
       <!-- Data Tab -->
       <NTabPane name="data" tab="数据">
-        <!-- Modification Action Bar -->
-        <div v-if="hasModifications" class="action-bar-top">
-          <NSpace align="center" justify="space-between">
-            <NSpace align="center">
-              <NIcon size="16" color="#f0a020">
-                <SaveOutline />
-              </NIcon>
-              <NText style="font-size: 13px">有 {{ modifiedCount }} 处修改未保存</NText>
-            </NSpace>
-            <NSpace :size="8">
-              <NButton size="tiny" ghost @click="discardAllChanges">放弃</NButton>
-              <NButton size="tiny" type="primary" :loading="isSaving" @click="handleSaveAllChanges">
-                <template #icon>
-                  <NIcon size="14"><CheckmarkCircleOutline /></NIcon>
-                </template>
-                保存修改
-              </NButton>
-            </NSpace>
-          </NSpace>
-        </div>
-
         <NCard class="glass-card">
           <template #header>
             <NSpace align="center" justify="space-between">
               <NSpace align="center" :size="8">
                 <span style="font-size: 12px">共 {{ total.toLocaleString() }} 行</span>
-                <NText v-if="hasModifications" depth="3" style="font-size: 11px">
-                  (提示：点击单元格编辑，黄色表示已修改)
+                <NText v-if="hasModifications" type="warning" strong style="font-size: 11px">
+                  (有 {{ modifiedCount }} 处修改待保存)
                 </NText>
               </NSpace>
               <NSpace :size="4">
+                <template v-if="hasModifications">
+                  <NButton size="tiny" ghost @click="discardAllChanges">放弃修改</NButton>
+                  <NButton size="tiny" type="primary" :loading="isSaving" @click="handleSaveAllChanges">
+                    <template #icon>
+                      <NIcon size="14"><CheckmarkCircleOutline /></NIcon>
+                    </template>
+                    保存全部
+                  </NButton>
+                </template>
                 <NButton size="tiny" @click="handleRefresh">
                   <template #icon>
                     <NIcon size="14"><RefreshOutline /></NIcon>
@@ -589,14 +653,6 @@ watch([database, table], () => {
 }
 
 .breadcrumb {
-  margin-bottom: 12px;
-}
-
-.action-bar-top {
-  padding: 8px 16px;
-  background: rgba(240, 160, 32, 0.1);
-  border: 1px solid rgba(240, 160, 32, 0.2);
-  border-radius: 4px;
   margin-bottom: 12px;
 }
 
