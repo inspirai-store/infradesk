@@ -24,6 +24,9 @@ import {
   TrashOutline, 
   RefreshOutline,
   DownloadOutline,
+  CheckmarkCircleOutline,
+  CloseCircleOutline,
+  SaveOutline,
 } from '@vicons/ionicons5'
 import { useMySQLStore } from '@/stores/mysql'
 import { mysqlApi } from '@/api'
@@ -45,19 +48,194 @@ const page = ref(1)
 const pageSize = ref(50)
 const loading = ref(false)
 
+// 编辑状态
+const editingCell = ref<{ rowIndex: number; column: string } | null>(null)
+const editValue = ref<unknown>('')
+const isSaving = ref(false)
+
+// 修改追踪
+interface CellModification {
+  rowIndex: number
+  column: string
+  oldValue: unknown
+  newValue: unknown
+}
+const modifications = ref<Map<string, CellModification>>(new Map())
+const modifiedCount = computed(() => modifications.value.size)
+const hasModifications = computed(() => modifiedCount.value > 0)
+
 const showAddModal = ref(false)
 const newRowData = ref<Record<string, string>>({})
+
+// 获取单元格修改状态
+function getCellModification(rowIndex: number, column: string): CellModification | null {
+  const key = `${rowIndex}-${column}`
+  return modifications.value.get(key) || null
+}
+
+// 检查单元格是否被修改
+function isCellModified(rowIndex: number, column: string): boolean {
+  return getCellModification(rowIndex, column) !== null
+}
+
+// 开始编辑单元格
+function startEdit(rowIndex: number, column: string) {
+  if (editingCell.value) return // 已经在一个单元格编辑中
+  editingCell.value = { rowIndex, column }
+  editValue.value = rows.value[rowIndex][column]
+}
+
+// 保存单元格编辑
+function saveEdit() {
+  if (!editingCell.value) return
+  const { rowIndex, column } = editingCell.value
+  const oldValue = rows.value[rowIndex][column]
+  const newValue = editValue.value
+  
+  if (newValue === oldValue) {
+    editingCell.value = null
+    return
+  }
+  
+  const key = `${rowIndex}-${column}`
+  modifications.value.set(key, { rowIndex, column, oldValue, newValue })
+  editingCell.value = null
+}
+
+// 取消编辑
+function cancelEdit() {
+  editingCell.value = null
+}
+
+// 恢复单个单元格
+function revertCell(rowIndex: number, column: string) {
+  const key = `${rowIndex}-${column}`
+  modifications.value.delete(key)
+}
+
+// 放弃所有修改
+function discardAllChanges() {
+  modifications.value.clear()
+  message.info('已放弃所有修改')
+}
+
+// 保存所有修改
+async function handleSaveAllChanges() {
+  if (modifications.value.size === 0) {
+    message.warning('没有需要保存的修改')
+    return
+  }
+
+  const pkCol = store.tableSchema?.columns.find(c => c.key === 'PRI')
+  if (!pkCol) {
+    message.error('无法保存：未找到主键')
+    return
+  }
+
+  dialog.info({
+    title: '保存修改',
+    content: `确定要保存 ${modifications.value.size} 处修改吗？`,
+    positiveText: '确认',
+    negativeText: '取消',
+    onPositiveClick: async () => {
+      isSaving.value = true
+      try {
+        // 按记录分组修改
+        const updatesByRow = new Map<number, Record<string, unknown>>()
+        modifications.value.forEach((mod) => {
+          if (!updatesByRow.has(mod.rowIndex)) {
+            updatesByRow.set(mod.rowIndex, {})
+          }
+          updatesByRow.get(mod.rowIndex)![mod.column] = mod.newValue
+        })
+
+        let successCount = 0
+        let failCount = 0
+
+        for (const [rowIndex, updates] of updatesByRow.entries()) {
+          const rowData = rows.value[rowIndex]
+          const pkValue = rowData[pkCol.name]
+
+          try {
+            await mysqlApi.updateRecord(
+              database.value,
+              table.value,
+              pkCol.name,
+              pkValue,
+              updates
+            )
+            successCount++
+          } catch (e) {
+            console.error(`Failed to update row ${rowIndex}:`, e)
+            failCount++
+          }
+        }
+
+        if (failCount > 0) {
+          message.warning(`保存完成：成功 ${successCount} 条，失败 ${failCount} 条`)
+        } else {
+          message.success(`成功保存 ${successCount} 条修改`)
+        }
+
+        modifications.value.clear()
+        fetchData()
+      } catch (e) {
+        message.error((e as Error).message)
+      } finally {
+        isSaving.value = false
+      }
+    }
+  })
+}
 
 const tableColumns = computed<DataTableColumns<Record<string, unknown>>>(() => {
   const cols: DataTableColumns<Record<string, unknown>> = columns.value.map(col => ({
     title: col,
     key: col,
     ellipsis: { tooltip: true },
-    render(row) {
+    render(row, index) {
+      const isEditing = editingCell.value?.rowIndex === index && editingCell.value?.column === col
+      const isModified = isCellModified(index, col)
       const val = row[col]
-      if (val === null) return 'NULL'
-      if (typeof val === 'object') return JSON.stringify(val)
-      return String(val)
+
+      if (isEditing) {
+        return h(NInput, {
+          size: 'tiny',
+          value: String(editValue.value ?? ''),
+          onUpdateValue: (v: string) => { editValue.value = v },
+          onBlur: saveEdit,
+          onKeyup: (e: KeyboardEvent) => {
+            if (e.key === 'Enter') saveEdit()
+            if (e.key === 'Escape') cancelEdit()
+          },
+          autofocus: true
+        })
+      }
+
+      if (isModified) {
+        const mod = getCellModification(index, col)!
+        return h('div', { 
+          style: { display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' },
+          onClick: () => startEdit(index, col)
+        }, [
+          h('span', { style: { textDecoration: 'line-through', opacity: 0.5, fontSize: '11px' } }, String(mod.oldValue ?? 'NULL')),
+          h('span', { style: { color: '#f0a020', fontWeight: 'bold' } }, String(mod.newValue ?? 'NULL')),
+          h(NButton, {
+            size: 'tiny',
+            quaternary: true,
+            circle: true,
+            onClick: (e: Event) => {
+              e.stopPropagation()
+              revertCell(index, col)
+            }
+          }, { icon: () => h(NIcon, { size: 12 }, { default: () => h(CloseCircleOutline) }) })
+        ])
+      }
+
+      return h('span', {
+        onClick: () => startEdit(index, col),
+        style: { cursor: 'pointer', display: 'block', width: '100%', minHeight: '1.5em' }
+      }, val === null ? 'NULL' : (typeof val === 'object' ? JSON.stringify(val) : String(val)))
     },
   }))
   
@@ -211,10 +389,36 @@ watch([database, table], () => {
     <NTabs type="line" animated size="small">
       <!-- Data Tab -->
       <NTabPane name="data" tab="数据">
+        <!-- Modification Action Bar -->
+        <div v-if="hasModifications" class="action-bar-top">
+          <NSpace align="center" justify="space-between">
+            <NSpace align="center">
+              <NIcon size="16" color="#f0a020">
+                <SaveOutline />
+              </NIcon>
+              <NText style="font-size: 13px">有 {{ modifiedCount }} 处修改未保存</NText>
+            </NSpace>
+            <NSpace :size="8">
+              <NButton size="tiny" ghost @click="discardAllChanges">放弃</NButton>
+              <NButton size="tiny" type="primary" :loading="isSaving" @click="handleSaveAllChanges">
+                <template #icon>
+                  <NIcon size="14"><CheckmarkCircleOutline /></NIcon>
+                </template>
+                保存修改
+              </NButton>
+            </NSpace>
+          </NSpace>
+        </div>
+
         <NCard class="glass-card">
           <template #header>
             <NSpace align="center" justify="space-between">
-              <span style="font-size: 12px">共 {{ total.toLocaleString() }} 行</span>
+              <NSpace align="center" :size="8">
+                <span style="font-size: 12px">共 {{ total.toLocaleString() }} 行</span>
+                <NText v-if="hasModifications" depth="3" style="font-size: 11px">
+                  (提示：点击单元格编辑，黄色表示已修改)
+                </NText>
+              </NSpace>
               <NSpace :size="4">
                 <NButton size="tiny" @click="handleRefresh">
                   <template #icon>
