@@ -938,3 +938,43 @@ func (s *MySQLService) ListUserGrants(conn *store.Connection, username, host str
 
 	return grants, nil
 }
+
+// GetDatabaseSchema 获取数据库的完整 Schema（用于自动补全）
+func (s *MySQLService) GetDatabaseSchema(conn *store.Connection, database string) (map[string]interface{}, error) {
+	db, err := s.connect(conn, database)
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	// 获取所有表
+	tables, err := s.ListTables(conn, database)
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]interface{})
+	result["database"] = database
+	result["tables"] = tables
+
+	// 为每个表获取列信息
+	tablesMap := make([]map[string]interface{}, 0)
+	for _, table := range tables {
+		schema, err := s.GetTableSchema(conn, database, table.Name)
+		if err != nil {
+			continue
+		}
+
+		tableMap := map[string]interface{}{
+			"name":      table.Name,
+			"engine":    table.Engine,
+			"comment":   table.Comment,
+			"columns":   schema.Columns,
+			"indexes":   schema.Indexes,
+		}
+		tablesMap = append(tablesMap, tableMap)
+	}
+	result["tables_detail"] = tablesMap
+
+	return result, nil
+}

@@ -123,9 +123,11 @@ export const mysqlApi = {
     api.delete(`/mysql/databases/${database}/tables/${table}`),
   
   // Schema
-  getTableSchema: (database: string, table: string) => 
+  getTableSchema: (database: string, table: string) =>
     api.get(`/mysql/databases/${database}/tables/${table}/schema`),
-  alterTable: (database: string, table: string, data: AlterTableRequest) => 
+  getDatabaseSchema: (database: string) =>
+    api.get(`/mysql/databases/${database}/schema`),
+  alterTable: (database: string, table: string, data: AlterTableRequest) =>
     api.put(`/mysql/databases/${database}/tables/${table}/schema`, data),
   
   // Data
@@ -181,9 +183,47 @@ export const redisApi = {
 export const systemApi = {
   getConnections: () => api.get('/connections'),
   createConnection: (data: Connection) => api.post('/connections', data),
-  getHistory: (type = '') => api.get('/history', { params: { type } }),
-  getSavedQueries: () => api.get('/saved-queries'),
-  saveSavedQuery: (data: SavedQuery) => api.post('/saved-queries', data),
+}
+
+// ==================== Query History API ====================
+export const historyApi = {
+  // 获取查询历史记录（支持过滤和分页）
+  getHistory: (params?: {
+    type?: string
+    database?: string
+    status?: string
+    keyword?: string
+    limit?: number
+    offset?: number
+  }) => api.get<QueryHistoryListResponse>('/history', { params }),
+
+  // 添加查询历史记录
+  addHistory: (data: AddQueryHistoryRequest) =>
+    api.post<QueryHistory>('/history', data),
+
+  // 删除指定历史记录
+  deleteHistory: (id: number) => api.delete(`/history/${id}`),
+
+  // 清理旧的历史记录
+  cleanupHistory: (days: number) =>
+    api.post<{ deleted: number }>('/history/cleanup', { days }),
+}
+
+// ==================== Saved Queries API ====================
+export const savedQueryApi = {
+  // 获取收藏的查询（支持分类过滤）
+  getSavedQueries: (category?: string) =>
+    api.get<SavedQuery[]>('/saved-queries', { params: { category } }),
+
+  // 创建收藏的查询
+  createSavedQuery: (data: CreateSavedQueryRequest) =>
+    api.post<SavedQuery>('/saved-queries', data),
+
+  // 更新收藏的查询
+  updateSavedQuery: (id: number, data: UpdateSavedQueryRequest) =>
+    api.put<SavedQuery>(`/saved-queries/${id}`, data),
+
+  // 删除收藏的查询
   deleteSavedQuery: (id: number) => api.delete(`/saved-queries/${id}`),
 }
 
@@ -377,13 +417,6 @@ export interface TestConnectionResult {
   message?: string
 }
 
-export interface SavedQuery {
-  id?: number
-  connection_id?: number
-  name: string
-  query_text: string
-}
-
 // ==================== K8s Service Discovery Types ====================
 export interface DiscoveredService {
   name: string
@@ -431,5 +464,64 @@ export interface ForwardInfo {
 export interface ForwardListResponse {
   forwards: ForwardInfo[]
   total: number
+}
+
+// ==================== Query History Types ====================
+export interface QueryHistory {
+  id: number
+  connection_id: number
+  database: string
+  query_type: string
+  query_text: string
+  executed_at: string
+  duration_ms: number
+  row_count: number
+  status: string
+  error_message?: string
+}
+
+export interface QueryHistoryListResponse {
+  history: QueryHistory[]
+  total: number
+}
+
+export interface AddQueryHistoryRequest {
+  connection_id: number
+  database: string
+  query_type: string
+  query_text: string
+  duration_ms: number
+  row_count: number
+  status: string
+  error_message?: string
+}
+
+// ==================== Saved Query Types ====================
+export interface SavedQuery {
+  id?: number
+  connection_id: number
+  database: string
+  name: string
+  query_text: string
+  description?: string
+  category?: string
+  created_at?: string
+  updated_at?: string
+}
+
+export interface CreateSavedQueryRequest {
+  connection_id: number
+  database: string
+  name: string
+  query_text: string
+  description?: string
+  category?: string
+}
+
+export interface UpdateSavedQueryRequest {
+  name?: string
+  query_text?: string
+  description?: string
+  category?: string
 }
 

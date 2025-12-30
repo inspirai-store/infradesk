@@ -2,6 +2,7 @@ package store
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -93,11 +94,14 @@ func (s *SQLite) initTables() error {
 	CREATE TABLE IF NOT EXISTS query_history (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		connection_id INTEGER,
+		database TEXT,
 		query_type TEXT,
 		query_text TEXT NOT NULL,
 		executed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		duration_ms INTEGER,
 		row_count INTEGER,
+		status TEXT DEFAULT 'success',
+		error_message TEXT,
 		FOREIGN KEY (connection_id) REFERENCES connections(id)
 	);
 
@@ -105,9 +109,13 @@ func (s *SQLite) initTables() error {
 	CREATE TABLE IF NOT EXISTS saved_queries (
 		id INTEGER PRIMARY KEY AUTOINCREMENT,
 		connection_id INTEGER,
+		database TEXT,
 		name TEXT NOT NULL,
+		description TEXT,
 		query_text TEXT NOT NULL,
+		category TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		FOREIGN KEY (connection_id) REFERENCES connections(id)
 	);
 
@@ -140,9 +148,20 @@ func (s *SQLite) initTables() error {
 	
 	// 迁移：为 clusters 添加 kubeconfig 字段
 	_, _ = s.db.Exec(`ALTER TABLE clusters ADD COLUMN kubeconfig TEXT`)
-	
+
 	// 为已存在的 NULL source 设置默认值
 	_, _ = s.db.Exec(`UPDATE connections SET source = 'local' WHERE source IS NULL`)
+
+	// 迁移：为 query_history 添加新字段
+	_, _ = s.db.Exec(`ALTER TABLE query_history ADD COLUMN database TEXT`)
+	_, _ = s.db.Exec(`ALTER TABLE query_history ADD COLUMN status TEXT DEFAULT 'success'`)
+	_, _ = s.db.Exec(`ALTER TABLE query_history ADD COLUMN error_message TEXT`)
+
+	// 迁移：为 saved_queries 添加新字段
+	_, _ = s.db.Exec(`ALTER TABLE saved_queries ADD COLUMN database TEXT`)
+	_, _ = s.db.Exec(`ALTER TABLE saved_queries ADD COLUMN description TEXT`)
+	_, _ = s.db.Exec(`ALTER TABLE saved_queries ADD COLUMN category TEXT`)
+	_, _ = s.db.Exec(`ALTER TABLE saved_queries ADD COLUMN updated_at DATETIME DEFAULT CURRENT_TIMESTAMP`)
 
 	return nil
 }
@@ -188,20 +207,27 @@ type Connection struct {
 type QueryHistory struct {
 	ID           int64  `json:"id"`
 	ConnectionID int64  `json:"connection_id"`
+	Database     string `json:"database"`
 	QueryType    string `json:"query_type"`
 	QueryText    string `json:"query_text"`
 	ExecutedAt   string `json:"executed_at"`
 	DurationMs   int64  `json:"duration_ms"`
 	RowCount     int64  `json:"row_count"`
+	Status       string `json:"status"`
+	ErrorMessage string `json:"error_message"`
 }
 
 // SavedQuery 收藏的查询
 type SavedQuery struct {
 	ID           int64  `json:"id"`
 	ConnectionID int64  `json:"connection_id"`
+	Database     string `json:"database"`
 	Name         string `json:"name"`
+	Description  string `json:"description"`
 	QueryText    string `json:"query_text"`
+	Category     string `json:"category"`
 	CreatedAt    string `json:"created_at"`
+	UpdatedAt    string `json:"updated_at"`
 }
 
 // GetConnections 获取所有连接配置
@@ -268,53 +294,127 @@ func (s *SQLite) CreateConnection(c *Connection) error {
 	return nil
 }
 
-// GetQueryHistory 获取查询历史
-func (s *SQLite) GetQueryHistory(queryType string, limit int) ([]QueryHistory, error) {
-	query := `
-		SELECT id, connection_id, query_type, query_text, executed_at, duration_ms, row_count 
-		FROM query_history 
-		WHERE query_type = ? OR ? = ''
-		ORDER BY executed_at DESC 
-		LIMIT ?
-	`
-	rows, err := s.db.Query(query, queryType, queryType, limit)
+// GetQueryHistory 获取查询历史（支持分页和筛选）
+func (s *SQLite) GetQueryHistory(queryType, database, status, keyword string, limit, offset int) ([]QueryHistory, int, error) {
+	// 构建查询条件
+	whereClause := "WHERE 1=1"
+	args := []interface{}{}
+	argCount := 0
+
+	if queryType != "" {
+		argCount++
+		whereClause += fmt.Sprintf(" AND query_type = @%d", argCount)
+		args = append(args, queryType)
+	}
+	if database != "" {
+		argCount++
+		whereClause += fmt.Sprintf(" AND database = @%d", argCount)
+		args = append(args, database)
+	}
+	if status != "" {
+		argCount++
+		whereClause += fmt.Sprintf(" AND status = @%d", argCount)
+		args = append(args, status)
+	}
+	if keyword != "" {
+		argCount++
+		whereClause += fmt.Sprintf(" AND query_text LIKE @%d", argCount)
+		args = append(args, "%"+keyword+"%")
+	}
+
+	// 获取总数
+	countQuery := "SELECT COUNT(*) FROM query_history " + whereClause
+	var total int
+	err := s.db.QueryRow(countQuery, args...).Scan(&total)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
+	}
+
+	// 获取分页数据
+	query := `
+		SELECT id, connection_id, COALESCE(database, ''), query_type, query_text,
+		       executed_at, COALESCE(duration_ms, 0), COALESCE(row_count, 0),
+		       COALESCE(status, 'success'), COALESCE(error_message, '')
+		FROM query_history ` + whereClause + `
+		ORDER BY executed_at DESC
+		LIMIT ? OFFSET ?
+	`
+	args = append(args, limit, offset)
+
+	rows, err := s.db.Query(query, args...)
+	if err != nil {
+		return nil, 0, err
 	}
 	defer rows.Close()
 
 	var history []QueryHistory
 	for rows.Next() {
 		var h QueryHistory
-		var connID, durationMs, rowCount sql.NullInt64
-		if err := rows.Scan(&h.ID, &connID, &h.QueryType, &h.QueryText, &h.ExecutedAt, &durationMs, &rowCount); err != nil {
-			return nil, err
+		var connID sql.NullInt64
+		if err := rows.Scan(&h.ID, &connID, &h.Database, &h.QueryType, &h.QueryText,
+			&h.ExecutedAt, &h.DurationMs, &h.RowCount, &h.Status, &h.ErrorMessage); err != nil {
+			return nil, 0, err
 		}
 		h.ConnectionID = connID.Int64
-		h.DurationMs = durationMs.Int64
-		h.RowCount = rowCount.Int64
 		history = append(history, h)
 	}
 
-	return history, nil
+	return history, total, nil
 }
 
 // AddQueryHistory 添加查询历史
 func (s *SQLite) AddQueryHistory(h *QueryHistory) error {
 	_, err := s.db.Exec(`
-		INSERT INTO query_history (connection_id, query_type, query_text, duration_ms, row_count)
-		VALUES (?, ?, ?, ?, ?)
-	`, h.ConnectionID, h.QueryType, h.QueryText, h.DurationMs, h.RowCount)
+		INSERT INTO query_history (connection_id, database, query_type, query_text, duration_ms, row_count, status, error_message)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	`, h.ConnectionID, h.Database, h.QueryType, h.QueryText, h.DurationMs, h.RowCount, h.Status, h.ErrorMessage)
 	return err
 }
 
-// GetSavedQueries 获取收藏的查询
-func (s *SQLite) GetSavedQueries() ([]SavedQuery, error) {
-	rows, err := s.db.Query(`
-		SELECT id, connection_id, name, query_text, created_at 
-		FROM saved_queries 
-		ORDER BY created_at DESC
-	`)
+// DeleteQueryHistory 删除查询历史
+func (s *SQLite) DeleteQueryHistory(id int64) error {
+	_, err := s.db.Exec(`DELETE FROM query_history WHERE id = ?`, id)
+	return err
+}
+
+// CleanupOldHistory 清理旧的历史记录
+func (s *SQLite) CleanupOldHistory(keepCount int) (int64, error) {
+	result, err := s.db.Exec(`
+		DELETE FROM query_history
+		WHERE id NOT IN (
+			SELECT id FROM query_history
+			ORDER BY executed_at DESC
+			LIMIT ?
+		)
+	`, keepCount)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
+}
+
+// GetSavedQueries 获取收藏的查询（支持分类筛选）
+func (s *SQLite) GetSavedQueries(category string) ([]SavedQuery, error) {
+	var rows *sql.Rows
+	var err error
+
+	if category != "" {
+		rows, err = s.db.Query(`
+			SELECT id, connection_id, COALESCE(database, ''), name, COALESCE(description, ''),
+			       query_text, COALESCE(category, ''), created_at, updated_at
+			FROM saved_queries
+			WHERE category = ?
+			ORDER BY created_at DESC
+		`, category)
+	} else {
+		rows, err = s.db.Query(`
+			SELECT id, connection_id, COALESCE(database, ''), name, COALESCE(description, ''),
+			       query_text, COALESCE(category, ''), created_at, updated_at
+			FROM saved_queries
+			ORDER BY created_at DESC
+		`)
+	}
+
 	if err != nil {
 		return nil, err
 	}
@@ -324,7 +424,8 @@ func (s *SQLite) GetSavedQueries() ([]SavedQuery, error) {
 	for rows.Next() {
 		var q SavedQuery
 		var connID sql.NullInt64
-		if err := rows.Scan(&q.ID, &connID, &q.Name, &q.QueryText, &q.CreatedAt); err != nil {
+		if err := rows.Scan(&q.ID, &connID, &q.Database, &q.Name, &q.Description,
+			&q.QueryText, &q.Category, &q.CreatedAt, &q.UpdatedAt); err != nil {
 			return nil, err
 		}
 		q.ConnectionID = connID.Int64
@@ -337,9 +438,9 @@ func (s *SQLite) GetSavedQueries() ([]SavedQuery, error) {
 // CreateSavedQuery 保存查询
 func (s *SQLite) CreateSavedQuery(q *SavedQuery) error {
 	result, err := s.db.Exec(`
-		INSERT INTO saved_queries (connection_id, name, query_text)
-		VALUES (?, ?, ?)
-	`, q.ConnectionID, q.Name, q.QueryText)
+		INSERT INTO saved_queries (connection_id, database, name, description, query_text, category)
+		VALUES (?, ?, ?, ?, ?, ?)
+	`, q.ConnectionID, q.Database, q.Name, q.Description, q.QueryText, q.Category)
 	if err != nil {
 		return err
 	}
@@ -351,6 +452,16 @@ func (s *SQLite) CreateSavedQuery(q *SavedQuery) error {
 	q.ID = id
 
 	return nil
+}
+
+// UpdateSavedQuery 更新收藏的查询
+func (s *SQLite) UpdateSavedQuery(q *SavedQuery) error {
+	_, err := s.db.Exec(`
+		UPDATE saved_queries
+		SET database = ?, name = ?, description = ?, query_text = ?, category = ?, updated_at = CURRENT_TIMESTAMP
+		WHERE id = ?
+	`, q.Database, q.Name, q.Description, q.QueryText, q.Category, q.ID)
+	return err
 }
 
 // DeleteSavedQuery 删除收藏的查询

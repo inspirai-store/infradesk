@@ -778,3 +778,249 @@ func (h *MySQLHandler) ListUserGrants(c *gin.Context) {
 
 	c.JSON(http.StatusOK, grants)
 }
+
+// GetDatabaseSchema 获取数据库 Schema
+func (h *MySQLHandler) GetDatabaseSchema(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	database := c.Param("db")
+
+	schema, err := h.svc.GetDatabaseSchema(conn, database)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, schema)
+}
+
+// GetQueryHistory 获取查询历史
+func (h *MySQLHandler) GetQueryHistory(c *gin.Context) {
+	queryType := c.Query("type")
+	database := c.Query("database")
+	status := c.Query("status")
+	keyword := c.Query("keyword")
+
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	size, _ := strconv.Atoi(c.DefaultQuery("size", "20"))
+	if page < 1 {
+		page = 1
+	}
+	if size < 1 || size > 100 {
+		size = 20
+	}
+
+	offset := (page - 1) * size
+
+	history, total, err := h.db.GetQueryHistory(queryType, database, status, keyword, size, offset)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"items": history,
+		"total": total,
+		"page":  page,
+		"size":  size,
+	})
+}
+
+// AddQueryHistory 添加查询历史
+func (h *MySQLHandler) AddQueryHistory(c *gin.Context) {
+	var req struct {
+		Database     string `json:"database"`
+		QueryType    string `json:"query_type"`
+		QueryText    string `json:"query_text" binding:"required"`
+		DurationMs   int64  `json:"duration_ms"`
+		RowCount     int64  `json:"row_count"`
+		Status       string `json:"status"`
+		ErrorMessage string `json:"error_message"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 获取当前连接 ID
+	connIDStr := c.GetHeader("X-Connection-ID")
+	if connIDStr == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+	connID, err := strconv.ParseInt(connIDStr, 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+
+	history := &store.QueryHistory{
+		ConnectionID: connID,
+		Database:     req.Database,
+		QueryType:    req.QueryType,
+		QueryText:    req.QueryText,
+		DurationMs:   req.DurationMs,
+		RowCount:     req.RowCount,
+		Status:       req.Status,
+		ErrorMessage: req.ErrorMessage,
+	}
+
+	if err := h.db.AddQueryHistory(history); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, history)
+}
+
+// DeleteQueryHistory 删除查询历史
+func (h *MySQLHandler) DeleteQueryHistory(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+
+	if err := h.db.DeleteQueryHistory(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+// CleanupOldHistory 清理旧的历史记录
+func (h *MySQLHandler) CleanupOldHistory(c *gin.Context) {
+	keepCount, _ := strconv.Atoi(c.DefaultQuery("keep", "1000"))
+	if keepCount < 100 {
+		keepCount = 100
+	}
+
+	deleted, err := h.db.CleanupOldHistory(keepCount)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"deleted": deleted,
+	})
+}
+
+// GetSavedQueries 获取收藏的查询
+func (h *MySQLHandler) GetSavedQueries(c *gin.Context) {
+	category := c.Query("category")
+
+	queries, err := h.db.GetSavedQueries(category)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, queries)
+}
+
+// CreateSavedQuery 创建收藏的查询
+func (h *MySQLHandler) CreateSavedQuery(c *gin.Context) {
+	var req struct {
+		Database    string `json:"database"`
+		Name        string `json:"name" binding:"required"`
+		Description string `json:"description"`
+		QueryText   string `json:"query_text" binding:"required"`
+		Category    string `json:"category"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 获取当前连接 ID
+	connIDStr := c.GetHeader("X-Connection-ID")
+	var connID int64
+	if connIDStr != "" {
+		id, err := strconv.ParseInt(connIDStr, 10, 64)
+		if err == nil {
+			connID = id
+		}
+	}
+
+	query := &store.SavedQuery{
+		ConnectionID: connID,
+		Database:    req.Database,
+		Name:        req.Name,
+		Description: req.Description,
+		QueryText:   req.QueryText,
+		Category:    req.Category,
+	}
+
+	if err := h.db.CreateSavedQuery(query); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, query)
+}
+
+// UpdateSavedQuery 更新收藏的查询
+func (h *MySQLHandler) UpdateSavedQuery(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+
+	var req struct {
+		Database    string `json:"database"`
+		Name        string `json:"name" binding:"required"`
+		Description string `json:"description"`
+		QueryText   string `json:"query_text" binding:"required"`
+		Category    string `json:"category"`
+	}
+
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	query := &store.SavedQuery{
+		ID:          id,
+		Database:    req.Database,
+		Name:        req.Name,
+		Description: req.Description,
+		QueryText:   req.QueryText,
+		Category:    req.Category,
+	}
+
+	if err := h.db.UpdateSavedQuery(query); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, query)
+}
+
+// DeleteSavedQuery 删除收藏的查询
+func (h *MySQLHandler) DeleteSavedQuery(c *gin.Context) {
+	id, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+
+	if err := h.db.DeleteSavedQuery(id); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}

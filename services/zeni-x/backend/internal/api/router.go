@@ -220,52 +220,23 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 		})
 
 		// ==================== 历史和收藏 API ====================
-		apiGroup.GET("/history", func(c *gin.Context) {
-			queryType := c.Query("type")
-			limit := 100
-			history, err := db.GetQueryHistory(queryType, limit)
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			c.JSON(http.StatusOK, history)
-		})
+		// 查询历史记录（支持过滤和分页）
+		apiGroup.GET("/history", mysqlHandler.GetQueryHistory)
+		// 添加查询历史记录
+		apiGroup.POST("/history", mysqlHandler.AddQueryHistory)
+		// 删除指定历史记录
+		apiGroup.DELETE("/history/:id", mysqlHandler.DeleteQueryHistory)
+		// 清理旧的历史记录
+		apiGroup.POST("/history/cleanup", mysqlHandler.CleanupOldHistory)
 
-		apiGroup.GET("/saved-queries", func(c *gin.Context) {
-			queries, err := db.GetSavedQueries()
-			if err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			c.JSON(http.StatusOK, queries)
-		})
-
-		apiGroup.POST("/saved-queries", func(c *gin.Context) {
-			var query store.SavedQuery
-			if err := c.ShouldBindJSON(&query); err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
-				return
-			}
-			if err := db.CreateSavedQuery(&query); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			c.JSON(http.StatusCreated, query)
-		})
-
-		apiGroup.DELETE("/saved-queries/:id", func(c *gin.Context) {
-			id := c.Param("id")
-			idInt, err := strconv.ParseInt(id, 10, 64)
-			if err != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
-				return
-			}
-			if err := db.DeleteSavedQuery(idInt); err != nil {
-				c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-				return
-			}
-			c.JSON(http.StatusOK, gin.H{"message": "deleted"})
-		})
+		// 获取收藏的查询（支持分类过滤）
+		apiGroup.GET("/saved-queries", mysqlHandler.GetSavedQueries)
+		// 创建收藏的查询
+		apiGroup.POST("/saved-queries", mysqlHandler.CreateSavedQuery)
+		// 更新收藏的查询
+		apiGroup.PUT("/saved-queries/:id", mysqlHandler.UpdateSavedQuery)
+		// 删除收藏的查询
+		apiGroup.DELETE("/saved-queries/:id", mysqlHandler.DeleteSavedQuery)
 
 		// ==================== MySQL API ====================
 		mysql := apiGroup.Group("/mysql")
@@ -280,6 +251,8 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 			mysql.PUT("/databases/:db", mysqlHandler.AlterDatabase)
 			mysql.POST("/databases/:db/grant", mysqlHandler.GrantPrivileges)
 			mysql.DELETE("/databases/:db", mysqlHandler.DropDatabase)
+			// 数据库 Schema（用于自动补全）
+			mysql.GET("/databases/:db/schema", mysqlHandler.GetDatabaseSchema)
 
 			// 表操作
 			mysql.GET("/databases/:db/tables", mysqlHandler.ListTables)
