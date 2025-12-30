@@ -5,7 +5,6 @@ import {
   NSpace,
   NButton,
   NIcon,
-  NDataTable,
   NSelect,
   NText,
   NTooltip,
@@ -18,14 +17,16 @@ import {
   RefreshOutline,
   ListOutline,
   SparklesOutline,
+  SettingsOutline,
 } from '@vicons/ionicons5'
 import { useMySQLStore } from '@/stores/mysql'
 import { useHistoryStore } from '@/stores/history'
 import { mysqlApi, getActiveConnectionId } from '@/api'
-import type { DataTableColumns } from 'naive-ui'
 import MonacoSQLEditor from './components/MonacoSQLEditor.vue'
 import QueryHistoryPanel from './components/QueryHistoryPanel.vue'
 import AIAssistantPanel from './components/AIAssistantPanel.vue'
+import TableDataEditor from './components/TableDataEditor.vue'
+import MySQLSettingsPanel from './components/MySQLSettingsPanel.vue'
 
 const store = useMySQLStore()
 const historyStore = useHistoryStore()
@@ -33,17 +34,21 @@ const message = useMessage()
 
 const selectedDatabase = ref('')
 const queryText = ref('SELECT * FROM ')
+const actualExecutedSQL = ref('') // 实际执行的 SQL（可能包含 LIMIT）
 const results = ref<Record<string, unknown>[]>([])
 const resultColumns = ref<string[]>([])
 const rowsAffected = ref(0)
 const duration = ref(0)
 const loading = ref(false)
 const error = ref('')
+const limitWasApplied = ref(false) // 是否自动应用了 LIMIT
 
 // 历史面板
 const showHistoryPanel = ref(false)
 // AI 面板
 const showAIPanel = ref(false)
+// 设置面板
+const showSettingsPanel = ref(false)
 
 // 编辑器引用
 const editorRef = ref<InstanceType<typeof MonacoSQLEditor>>()
@@ -51,20 +56,6 @@ const editorRef = ref<InstanceType<typeof MonacoSQLEditor>>()
 const databaseOptions = computed(() =>
   store.databases.map(db => ({ label: db.name, value: db.name }))
 )
-
-const tableColumns = computed<DataTableColumns<Record<string, unknown>>>(() => {
-  return resultColumns.value.map(col => ({
-    title: col,
-    key: col,
-    ellipsis: { tooltip: true },
-    render(row: Record<string, unknown>) {
-      const val = row[col]
-      if (val === null) return 'NULL'
-      if (typeof val === 'object') return JSON.stringify(val)
-      return String(val)
-    },
-  }))
-})
 
 // 获取查询类型
 function getQueryType(sql: string): string {
@@ -88,11 +79,18 @@ async function executeQuery() {
   error.value = ''
   results.value = []
   resultColumns.value = []
+  limitWasApplied.value = false
 
   const connectionId = getActiveConnectionId('mysql')
 
   try {
-    const response = await mysqlApi.executeQuery(selectedDatabase.value, queryText.value)
+    // 应用查询限制
+    const originalSQL = queryText.value
+    const limitedSQL = store.applyLimit(originalSQL)
+    limitWasApplied.value = limitedSQL !== originalSQL
+    actualExecutedSQL.value = limitedSQL
+
+    const response = await mysqlApi.executeQuery(selectedDatabase.value, limitedSQL)
     const result = response.data
 
     if (result.columns) {
@@ -110,8 +108,8 @@ async function executeQuery() {
       await historyStore.addHistory({
         connection_id: connectionId,
         database: selectedDatabase.value,
-        query_type: getQueryType(queryText.value),
-        query_text: queryText.value,
+        query_type: getQueryType(originalSQL),
+        query_text: originalSQL,
         duration_ms: duration.value,
         row_count: results.value.length,
         status: 'success'
@@ -138,6 +136,13 @@ async function executeQuery() {
     }
   } finally {
     loading.value = false
+  }
+}
+
+// 刷新查询（从 TableDataEditor 调用）
+async function refreshQuery() {
+  if (actualExecutedSQL.value) {
+    await executeQuery()
   }
 }
 
@@ -202,6 +207,17 @@ function applyAISQL(sql: string) {
               </template>
               AI 辅助生成/优化/诊断
             </NTooltip>
+            <NTooltip placement="bottom">
+              <template #trigger>
+                <NButton size="small" @click="showSettingsPanel = true">
+                  <template #icon>
+                    <NIcon size="14"><SettingsOutline /></NIcon>
+                  </template>
+                  查询设置
+                </NButton>
+              </template>
+              查询限制设置
+            </NTooltip>
             <NButton
               type="primary"
               size="small"
@@ -240,11 +256,14 @@ function applyAISQL(sql: string) {
 
       <!-- Results -->
       <div class="results-section">
-        <NSpace align="center" class="results-header">
+        <NSpace align="center" class="results-header" justify="space-between">
           <NText v-if="results.length > 0 || rowsAffected > 0" style="font-size: 12px">
             <NIcon size="12"><TimeOutline /></NIcon>
             {{ duration }}ms |
             {{ results.length > 0 ? `${results.length} 行` : `影响 ${rowsAffected} 行` }}
+          </NText>
+          <NText v-if="store.queryLimit > 0" depth="3" style="font-size: 11px">
+            查询限制: {{ store.queryLimit }} 行
           </NText>
         </NSpace>
 
@@ -253,17 +272,22 @@ function applyAISQL(sql: string) {
           <NText type="error" style="font-size: 12px">{{ error }}</NText>
         </NCard>
 
-        <!-- Results Table -->
-        <NDataTable
+        <!-- Query Limit Warning -->
+        <NCard v-if="limitWasApplied" class="warning-card">
+          <NText style="font-size: 12px">
+            已自动添加 LIMIT {{ store.queryLimit }} 以防止查询过多数据。如需查看所有数据，请手动添加 LIMIT 子句或在设置中调整查询限制。
+          </NText>
+        </NCard>
+
+        <!-- Results Table with Edit Capability -->
+        <TableDataEditor
           v-if="results.length > 0"
-          :columns="tableColumns"
+          :database="selectedDatabase"
+          :sql="actualExecutedSQL"
+          :columns="resultColumns"
           :data="results"
-          :bordered="false"
-          :max-height="360"
-          :scroll-x="resultColumns.length * 120"
-          size="small"
-          striped
-          virtual-scroll
+          :loading="loading"
+          @refresh="refreshQuery"
         />
 
         <!-- Empty State -->
@@ -286,6 +310,9 @@ function applyAISQL(sql: string) {
       @update:show="showAIPanel = $event"
       @applySQL="applyAISQL"
     />
+
+    <!-- MySQL Settings Panel -->
+    <MySQLSettingsPanel v-model:show="showSettingsPanel" />
   </div>
 </template>
 
@@ -311,6 +338,12 @@ function applyAISQL(sql: string) {
 .error-card {
   background: rgba(239, 68, 68, 0.1);
   border: 1px solid rgba(239, 68, 68, 0.3);
+  margin-bottom: 12px;
+}
+
+.warning-card {
+  background: rgba(240, 160, 32, 0.1);
+  border: 1px solid rgba(240, 160, 32, 0.3);
   margin-bottom: 12px;
 }
 

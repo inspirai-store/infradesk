@@ -262,12 +262,16 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 			// 表结构
 			mysql.GET("/databases/:db/tables/:table/schema", mysqlHandler.GetTableSchema)
 			mysql.PUT("/databases/:db/tables/:table/schema", mysqlHandler.AlterTable)
+			// 表主键（用于编辑功能）
+			mysql.GET("/databases/:db/tables/:table/primary-key", mysqlHandler.GetTablePrimaryKey)
 
 			// 数据操作
 			mysql.GET("/databases/:db/tables/:table/rows", mysqlHandler.GetRows)
 			mysql.POST("/databases/:db/tables/:table/rows", mysqlHandler.InsertRow)
 			mysql.PUT("/databases/:db/tables/:table/rows", mysqlHandler.UpdateRow)
 			mysql.DELETE("/databases/:db/tables/:table/rows", mysqlHandler.DeleteRow)
+			// 单条记录更新（通过主键）
+			mysql.PUT("/databases/:db/tables/:table/record", mysqlHandler.UpdateRecord)
 
 			// SQL 查询
 			mysql.POST("/query", mysqlHandler.ExecuteQuery)

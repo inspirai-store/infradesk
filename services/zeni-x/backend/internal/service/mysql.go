@@ -978,3 +978,106 @@ func (s *MySQLService) GetDatabaseSchema(conn *store.Connection, database string
 
 	return result, nil
 }
+
+// GetTablePrimaryKey 获取表的主键列名
+func (s *MySQLService) GetTablePrimaryKey(conn *store.Connection, database, table string) (string, error) {
+	db, err := s.connect(conn, database)
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+
+	query := `
+		SELECT COLUMN_NAME
+		FROM information_schema.KEY_COLUMN_USAGE
+		WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND CONSTRAINT_NAME = 'PRIMARY'
+		ORDER BY ORDINAL_POSITION
+	`
+
+	rows, err := db.Query(query, database, table)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	var columns []string
+	for rows.Next() {
+		var column string
+		if err := rows.Scan(&column); err != nil {
+			return "", err
+		}
+		columns = append(columns, column)
+	}
+
+	if len(columns) == 0 {
+		return "", fmt.Errorf("table %s has no primary key", table)
+	}
+
+	// 处理复合主键
+	if len(columns) > 1 {
+		return strings.Join(columns, ","), nil
+	}
+
+	return columns[0], nil
+}
+
+// UpdateRecord 通过主键更新单条记录
+func (s *MySQLService) UpdateRecord(conn *store.Connection, database, table, primaryKey string, primaryValue interface{}, updates map[string]interface{}) error {
+	db, err := s.connect(conn, database)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	// 构建 SET 子句
+	var setClauses []string
+	var values []interface{}
+
+	for column, value := range updates {
+		setClauses = append(setClauses, fmt.Sprintf("`%s` = ?", column))
+		values = append(values, value)
+	}
+
+	// 构建 WHERE 子句（使用主键）
+	var whereClause string
+	if strings.Contains(primaryKey, ",") {
+		// 复合主键
+		primaryKeys := strings.Split(primaryKey, ",")
+		var whereParts []string
+		// 假设 primaryValue 是逗号分隔的值
+		if valueStr, ok := primaryValue.(string); ok {
+			primaryValues := strings.Split(valueStr, ",")
+			for i, pk := range primaryKeys {
+				if i < len(primaryValues) {
+					whereParts = append(whereParts, fmt.Sprintf("`%s` = ?", pk))
+					values = append(values, primaryValues[i])
+				}
+			}
+		} else {
+			return fmt.Errorf("composite primary key value must be a comma-separated string")
+		}
+		whereClause = strings.Join(whereParts, " AND ")
+	} else {
+		// 单主键
+		whereClause = fmt.Sprintf("`%s` = ?", primaryKey)
+		values = append(values, primaryValue)
+	}
+
+	query := fmt.Sprintf("UPDATE `%s` SET %s WHERE %s",
+		table,
+		strings.Join(setClauses, ", "),
+		whereClause,
+	)
+
+	result, err := db.Exec(query, values...)
+	if err != nil {
+		return err
+	}
+
+	affected, _ := result.RowsAffected()
+	if affected == 0 {
+		return fmt.Errorf("no rows affected, record may not exist")
+	}
+
+	return nil
+}

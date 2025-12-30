@@ -1024,3 +1024,65 @@ func (h *MySQLHandler) DeleteSavedQuery(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
+
+// GetTablePrimaryKey 获取表主键
+func (h *MySQLHandler) GetTablePrimaryKey(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	dbName := c.Param("db")
+	table := c.Param("table")
+
+	primaryKey, err := h.svc.GetTablePrimaryKey(conn, dbName, table)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"primary_key": primaryKey})
+}
+
+// UpdateRecord 通过主键更新单条记录
+func (h *MySQLHandler) UpdateRecord(c *gin.Context) {
+	conn, err := h.getConnection(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid connection id"})
+		return
+	}
+	if conn == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "no connection selected"})
+		return
+	}
+
+	dbName := c.Param("db")
+	table := c.Param("table")
+
+	var req struct {
+		PrimaryKey  string                 `json:"primary_key" binding:"required"`
+		PrimaryValue interface{}            `json:"primary_value" binding:"required"`
+		Updates     map[string]interface{} `json:"updates" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if len(req.Updates) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "updates cannot be empty"})
+		return
+	}
+
+	if err := h.svc.UpdateRecord(conn, dbName, table, req.PrimaryKey, req.PrimaryValue, req.Updates); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "record updated", "affected_rows": 1})
+}

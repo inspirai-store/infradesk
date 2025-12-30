@@ -114,14 +114,14 @@ export const mysqlApi = {
   alterDatabase: (name: string, data: AlterDatabaseRequest) => api.put(`/mysql/databases/${name}`, data),
   grantPrivileges: (name: string, data: GrantPrivilegesRequest) => api.post(`/mysql/databases/${name}/grant`, data),
   dropDatabase: (name: string) => api.delete(`/mysql/databases/${name}`),
-  
+
   // Tables
   listTables: (database: string) => api.get(`/mysql/databases/${database}/tables`),
-  createTable: (database: string, data: CreateTableRequest) => 
+  createTable: (database: string, data: CreateTableRequest) =>
     api.post(`/mysql/databases/${database}/tables`, data),
-  dropTable: (database: string, table: string) => 
+  dropTable: (database: string, table: string) =>
     api.delete(`/mysql/databases/${database}/tables/${table}`),
-  
+
   // Schema
   getTableSchema: (database: string, table: string) =>
     api.get(`/mysql/databases/${database}/tables/${table}/schema`),
@@ -129,21 +129,29 @@ export const mysqlApi = {
     api.get(`/mysql/databases/${database}/schema`),
   alterTable: (database: string, table: string, data: AlterTableRequest) =>
     api.put(`/mysql/databases/${database}/tables/${table}/schema`, data),
-  
+  getTablePrimaryKey: (database: string, table: string) =>
+    api.get<{ primary_key: string }>(`/mysql/databases/${database}/tables/${table}/primary-key`),
+
   // Data
-  getRows: (database: string, table: string, page = 1, size = 50) => 
+  getRows: (database: string, table: string, page = 1, size = 50) =>
     api.get(`/mysql/databases/${database}/tables/${table}/rows`, { params: { page, size } }),
-  insertRow: (database: string, table: string, data: Record<string, unknown>) => 
+  insertRow: (database: string, table: string, data: Record<string, unknown>) =>
     api.post(`/mysql/databases/${database}/tables/${table}/rows`, data),
-  updateRow: (database: string, table: string, data: UpdateRowRequest) => 
+  updateRow: (database: string, table: string, data: UpdateRowRequest) =>
     api.put(`/mysql/databases/${database}/tables/${table}/rows`, data),
-  deleteRow: (database: string, table: string, where: Record<string, unknown>) => 
+  updateRecord: (database: string, table: string, primaryKey: string, primaryValue: unknown, updates: Record<string, unknown>) =>
+    api.put(`/mysql/databases/${database}/tables/${table}/record`, {
+      primary_key: primaryKey,
+      primary_value: primaryValue,
+      updates
+    }),
+  deleteRow: (database: string, table: string, where: Record<string, unknown>) =>
     api.delete(`/mysql/databases/${database}/tables/${table}/rows`, { data: where }),
-  
+
   // Query
-  executeQuery: (database: string, query: string) => 
+  executeQuery: (database: string, query: string) =>
     api.post('/mysql/query', { database, query }),
-  
+
   // Export/Import
   exportData: (database: string, table: string, format = 'json') =>
     api.post('/mysql/export', { database, table, format }),
