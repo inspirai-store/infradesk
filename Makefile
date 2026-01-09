@@ -2,11 +2,12 @@
 # Zeni-X Makefile - 多环境构建部署管理
 # ============================================================
 
-.PHONY: help dev test uat build clean
+.PHONY: help dev test uat build clean client-dev client-build client-set-version client-check
 
 # 变量
 REGISTRY ?= yunizeni-registry.cn-shenzhen.cr.aliyuncs.com/yunizeni
 VERSION ?= latest
+TAG ?= $(shell git describe --tags --always 2>/dev/null || echo "dev")
 DEV_DIR ?= $(CURDIR)/.dev
 SERVICE_DIR ?= $(CURDIR)/services/zeni-x
 FRONTEND_DIR ?= $(SERVICE_DIR)/frontend
@@ -36,6 +37,11 @@ help:
 	@echo "  make dev-frontend - 仅启动前端开发服务器"
 	@echo "  make dev-backend  - 仅启动后端开发服务器"
 	@echo "  make dev-check    - 检查开发环境依赖"
+	@echo ""
+	@echo "[桌面客户端 (Tauri)]"
+	@echo "  make client-dev           - 启动 Tauri 客户端开发模式"
+	@echo "  make client-build         - 编译打包 Tauri 客户端"
+	@echo "  make client-build TAG=xxx - 编译打包并设置版本号为 xxx"
 	@echo ""
 	@echo "[依赖]"
 	@echo "  make install      - 安装前后端依赖（pnpm + go mod）"
@@ -185,6 +191,30 @@ dev-check:
 	@command -v pnpm >/dev/null 2>&1 || { echo "❌ pnpm not found. Please install pnpm"; exit 1; }
 	@command -v node >/dev/null 2>&1 || { echo "❌ Node.js not found. Please install Node.js 18+"; exit 1; }
 	@echo "✅ All dependencies found!"
+
+# ------------------------------------------------------------
+# 桌面客户端 (Tauri)
+# ------------------------------------------------------------
+client-dev: client-check
+	@echo "🖥️  Starting Tauri client in dev mode..."
+	cd $(CURDIR) && cargo tauri dev
+
+client-build: client-check client-set-version
+	@echo "📦 Building Tauri client (TAG=$(TAG))..."
+	cd $(CURDIR) && cargo tauri build
+	@echo "✅ Tauri client build complete!"
+	@echo "📁 Output: src-tauri/target/release/bundle/"
+
+client-set-version:
+	@echo "🏷️  Setting client version to $(TAG)..."
+	@sed -i.bak 's/"version": "[^"]*"/"version": "$(TAG)"/' $(CURDIR)/src-tauri/tauri.conf.json && rm -f $(CURDIR)/src-tauri/tauri.conf.json.bak
+	@sed -i.bak 's/^version = "[^"]*"/version = "$(TAG)"/' $(CURDIR)/src-tauri/Cargo.toml && rm -f $(CURDIR)/src-tauri/Cargo.toml.bak
+
+client-check:
+	@echo "✅ Checking Tauri dependencies..."
+	@command -v cargo >/dev/null 2>&1 || { echo "❌ Rust/Cargo not found. Please install Rust"; exit 1; }
+	@command -v pnpm >/dev/null 2>&1 || { echo "❌ pnpm not found. Please install pnpm"; exit 1; }
+	@echo "✅ Tauri dependencies found!"
 
 # 安装依赖
 install:

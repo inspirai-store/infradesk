@@ -161,13 +161,13 @@ export async function getPlatformInfoAsync(): Promise<PlatformInfo> {
   try {
     // Dynamically import Tauri OS plugin only when in Tauri environment
     const os = await import('@tauri-apps/plugin-os')
-    const { version, tauriVersion } = await import('@tauri-apps/api/app')
+    const { getVersion, getTauriVersion } = await import('@tauri-apps/api/app')
 
     const [osType, osArch, appVersion, tauriVer] = await Promise.all([
       os.type(),
       os.arch(),
-      version().catch(() => undefined),
-      tauriVersion().catch(() => undefined),
+      getVersion().catch(() => undefined),
+      getTauriVersion().catch(() => undefined),
     ])
 
     // Map Tauri OS type to our platform type
@@ -218,9 +218,7 @@ export function resetPlatformCache(): void {
  * }
  * ```
  */
-export function assertTauri(): asserts globalThis is typeof globalThis & {
-  __TAURI_INTERNALS__: unknown
-} {
+export function assertTauri(): void {
   if (!isTauri()) {
     throw new Error('This function requires a Tauri environment')
   }
