@@ -1,0 +1,69 @@
+[package]
+name = "zeni-x"
+version = "0.1.0"
+description = "Zeni-X Database Management Platform"
+authors = ["Zeni-X Team"]
+license = "MIT"
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+name = "zeni_x_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2" }
+
+[dependencies]
+# Tauri
+tauri = { version = "2" }
+tauri-plugin-log = "2"
+tauri-plugin-shell = "2"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+log = "0.4"
+
+# Database drivers
+sqlx = { version = "0.8", features = ["runtime-tokio", "sqlite", "mysql"] }
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+
+# Keychain access for secure password storage
+keyring = "3"
+
+# Date/time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID generation
+uuid = { version = "1", features = ["v4", "serde"] }
+
+[dev-dependencies]
+# Testing
+mockall = "0.13"
+tempfile = "3"
+
+[features]
+# this feature is used for production builds or when `devPath` points to the filesystem and the built-in dev server is disabled.
+# If you use cargo directly instead of tauri's cli you can use this feature flag to switch between tauri's `dev` and `build` modes.
+# DO NOT REMOVE!!
+custom-protocol = [ "tauri/custom-protocol" ]
+
+[profile.release]
+# Optimize for size
+lto = true
+opt-level = "s"
+strip = true
+codegen-units = 1
