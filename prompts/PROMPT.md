@@ -9,7 +9,7 @@ Transform the Zeni-X database management platform from a Web application + K8s d
 - [x] Configure `src-tauri/tauri.conf.json` to point to existing frontend directory
 - [x] Configure Cargo.toml with dependencies (sqlx, redis, keyring, serde, thiserror)
 - [x] Verify `pnpm tauri dev` launches blank application successfully
-- [ ] Install `@tauri-apps/api` and `@tauri-apps/plugin-*` frontend dependencies
+- [x] Install `@tauri-apps/api` and `@tauri-apps/plugin-*` frontend dependencies
 - [ ] Modify `vite.config.ts` to add Tauri dev server configuration
 - [ ] Create `src/utils/platform.ts` for runtime environment detection (Tauri/Web)
 
