@@ -11,7 +11,7 @@ Transform the Zeni-X database management platform from a Web application + K8s d
 - [x] Verify `pnpm tauri dev` launches blank application successfully
 - [x] Install `@tauri-apps/api` and `@tauri-apps/plugin-*` frontend dependencies
 - [x] Modify `vite.config.ts` to add Tauri dev server configuration
-- [ ] Create `src/utils/platform.ts` for runtime environment detection (Tauri/Web)
+- [x] Create `src/utils/platform.ts` for runtime environment detection (Tauri/Web)
 
 ### Phase 2: Tauri API Adapter Layer (TDD)
 - [ ] Write tests for `isTauri()` environment detection function
