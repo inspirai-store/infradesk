@@ -49,8 +49,8 @@ export const useConnectionsStore = defineStore('connections', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await connectionApi.getAll()
-      connections.value = response.data || []
+      const data = await connectionApi.getAll()
+      connections.value = data || []
       
       // Auto-select default connections or first available for each type
       for (const type of ['mysql', 'redis', 'mongodb', 'minio']) {
@@ -75,10 +75,10 @@ export const useConnectionsStore = defineStore('connections', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await connectionApi.getByType(type)
+      const data = await connectionApi.getByType(type)
       // Update only connections of this type
       const otherConnections = connections.value.filter(c => c.type !== type)
-      connections.value = [...otherConnections, ...(response.data || [])]
+      connections.value = [...otherConnections, ...(data || [])]
     } catch (e) {
       error.value = (e as Error).message
     } finally {
@@ -88,15 +88,14 @@ export const useConnectionsStore = defineStore('connections', () => {
 
   async function createConnection(data: Connection): Promise<Connection | null> {
     try {
-      const response = await connectionApi.create(data)
-      const newConn = response.data
+      const newConn = await connectionApi.create(data)
       connections.value.push(newConn)
-      
+
       // Auto-select if it's the first connection of this type
       if (!activeConnections.value[data.type] && newConn.id) {
         setActiveConnection(data.type, newConn.id)
       }
-      
+
       return newConn
     } catch (e) {
       error.value = (e as Error).message
@@ -106,12 +105,12 @@ export const useConnectionsStore = defineStore('connections', () => {
 
   async function updateConnection(id: number, data: Connection) {
     try {
-      const response = await connectionApi.update(id, data)
+      const updatedConn = await connectionApi.update(id, data)
       const index = connections.value.findIndex(c => c.id === id)
       if (index !== -1) {
-        connections.value[index] = response.data
+        connections.value[index] = updatedConn
       }
-      return response.data
+      return updatedConn
     } catch (e) {
       error.value = (e as Error).message
       throw e
@@ -141,8 +140,8 @@ export const useConnectionsStore = defineStore('connections', () => {
 
   async function testConnection(data: Connection): Promise<{ success: boolean; error?: string }> {
     try {
-      const response = await connectionApi.test(data)
-      return response.data
+      const result = await connectionApi.test(data)
+      return result
     } catch (e) {
       return { success: false, error: (e as Error).message }
     }

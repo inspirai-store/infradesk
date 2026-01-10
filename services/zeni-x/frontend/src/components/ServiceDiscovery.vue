@@ -88,12 +88,12 @@ async function handleKubeconfigUpload(options: { file: UploadFileInfo }) {
 
 async function loadClusters() {
   if (!kubeconfigContent.value) return
-  
+
   loadingClusters.value = true
   try {
-    const response = await k8sApi.listClusters(kubeconfigContent.value)
-    clusters.value = response.data.clusters || []
-    
+    const data = await k8sApi.listClusters(kubeconfigContent.value)
+    clusters.value = data.clusters || []
+
     if (clusters.value.length > 0) {
       // 默认选择第一个集群
       selectedCluster.value = clusters.value[0]
@@ -126,13 +126,13 @@ async function handleDiscover() {
   abortController.value = new AbortController()
   
   try {
-    const response = await k8sApi.discover(
+    const data = await k8sApi.discover(
       kubeconfigContent.value || undefined,
       selectedCluster.value || undefined,
       abortController.value.signal
     )
-    services.value = response.data || []
-    
+    services.value = data || []
+
     if (services.value.length === 0) {
       message.warning('未发现任何中间件服务')
     } else {
@@ -177,14 +177,13 @@ async function handleImport() {
   importing.value = true
   try {
     // 第一次尝试导入（不强制覆盖）
-    const response = await k8sApi.importConnections(
-      toImport, 
-      false, 
-      kubeconfigContent.value, 
-      selectedCluster.value, 
+    const result = await k8sApi.importConnections(
+      toImport,
+      false,
+      kubeconfigContent.value,
+      selectedCluster.value,
       selectedCluster.value // 使用集群名称作为标识
     )
-    const result = response.data
     
     // 统计结果
     const skippedServices = result.results.filter(r => r.skipped)
@@ -206,14 +205,13 @@ async function handleImport() {
           // 用户确认强制覆盖
           importing.value = true
           try {
-            const overrideResponse = await k8sApi.importConnections(
-              toImport, 
-              true, 
-              kubeconfigContent.value, 
-              selectedCluster.value, 
+            const overrideResult = await k8sApi.importConnections(
+              toImport,
+              true,
+              kubeconfigContent.value,
+              selectedCluster.value,
               selectedCluster.value
             )
-            const overrideResult = overrideResponse.data
             
             // 显示覆盖结果
             const successMsg = []

@@ -214,8 +214,8 @@ const columns: DataTableColumns<ForwardInfo> = [
 async function loadForwards() {
   loading.value = true
   try {
-    const response = await portForwardApi.list()
-    forwards.value = response.data.forwards || []
+    const data = await portForwardApi.list()
+    forwards.value = data.forwards || []
   } catch (error: any) {
     message.error(`加载转发列表失败: ${error.message}`)
   } finally {

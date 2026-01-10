@@ -40,8 +40,8 @@ async function loadSchema(database: string) {
   if (!database) return
 
   try {
-    const response = await mysqlApi.getDatabaseSchema(database)
-    const tablesDetail = response.data.tables_detail || []
+    const data = await mysqlApi.getDatabaseSchema(database) as { tables_detail?: any[] }
+    const tablesDetail = data.tables_detail || []
 
     // 转换为 Table 类型
     const tables: Table[] = tablesDetail.map((t: any) => ({

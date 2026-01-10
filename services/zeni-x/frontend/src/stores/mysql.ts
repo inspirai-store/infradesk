@@ -153,8 +153,8 @@ export const useMySQLStore = defineStore('mysql', () => {
 
   async function fetchServerInfo() {
     try {
-      const response = await mysqlApi.getInfo()
-      serverInfo.value = response.data
+      const data = await mysqlApi.getInfo() as ServerInfo
+      serverInfo.value = data
     } catch (e) {
       error.value = (e as Error).message
     }
@@ -163,8 +163,8 @@ export const useMySQLStore = defineStore('mysql', () => {
   async function fetchDatabases() {
     loading.value = true
     try {
-      const response = await mysqlApi.listDatabases()
-      databases.value = response.data || []
+      const data = await mysqlApi.listDatabases() as Database[]
+      databases.value = data || []
     } catch (e) {
       error.value = (e as Error).message
     } finally {
@@ -202,8 +202,8 @@ export const useMySQLStore = defineStore('mysql', () => {
   async function fetchUsers() {
     loading.value = true
     try {
-      const response = await mysqlApi.listUsers()
-      users.value = response.data || []
+      const data = await mysqlApi.listUsers()
+      users.value = data || []
     } catch (e) {
       error.value = (e as Error).message
     } finally {
@@ -240,8 +240,8 @@ export const useMySQLStore = defineStore('mysql', () => {
     loading.value = true
     currentDatabase.value = database
     try {
-      const response = await mysqlApi.listTables(database)
-      const tableList = response.data || []
+      const data = await mysqlApi.listTables(database) as Table[]
+      const tableList = data || []
       tables.value = tableList
       // 缓存结果
       fetchedDatabases.value.add(database)
@@ -262,8 +262,8 @@ export const useMySQLStore = defineStore('mysql', () => {
     loading.value = true
     currentTable.value = table
     try {
-      const response = await mysqlApi.getTableSchema(database, table)
-      tableSchema.value = response.data
+      const data = await mysqlApi.getTableSchema(database, table) as TableSchema
+      tableSchema.value = data
     } catch (e) {
       error.value = (e as Error).message
     } finally {

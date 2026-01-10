@@ -39,14 +39,14 @@ async function fetchStatus() {
   const statuses: ServiceStatus[] = []
   
   try {
-    const mysqlRes = await mysqlApi.getInfo()
+    const mysqlRes = await mysqlApi.getInfo() as { connected: boolean; version?: string; host: string; port: number }
     statuses.push({
       name: 'MySQL',
       type: 'mysql',
-      connected: mysqlRes.data.connected,
-      version: mysqlRes.data.version || 'N/A',
-      host: mysqlRes.data.host,
-      port: mysqlRes.data.port,
+      connected: mysqlRes.connected,
+      version: mysqlRes.version || 'N/A',
+      host: mysqlRes.host,
+      port: mysqlRes.port,
     })
   } catch {
     statuses.push({
@@ -58,19 +58,19 @@ async function fetchStatus() {
       port: 0,
     })
   }
-  
+
   try {
-    const redisRes = await redisApi.getInfo()
+    const redisRes = await redisApi.getInfo() as { connected: boolean; version?: string; host: string; port: number; used_memory?: string; total_keys?: number }
     statuses.push({
       name: 'Redis',
       type: 'redis',
-      connected: redisRes.data.connected,
-      version: redisRes.data.version || 'N/A',
-      host: redisRes.data.host,
-      port: redisRes.data.port,
+      connected: redisRes.connected,
+      version: redisRes.version || 'N/A',
+      host: redisRes.host,
+      port: redisRes.port,
       extra: {
-        used_memory: redisRes.data.used_memory,
-        total_keys: redisRes.data.total_keys,
+        used_memory: redisRes.used_memory,
+        total_keys: redisRes.total_keys,
       },
     })
   } catch {

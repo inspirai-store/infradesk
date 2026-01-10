@@ -37,8 +37,8 @@ export const useRedisStore = defineStore('redis', () => {
 
   async function fetchServerInfo() {
     try {
-      const response = await redisApi.getInfo()
-      serverInfo.value = response.data
+      const data = await redisApi.getInfo() as RedisInfo
+      serverInfo.value = data
     } catch (e) {
       error.value = (e as Error).message
     }
@@ -48,8 +48,7 @@ export const useRedisStore = defineStore('redis', () => {
     loading.value = true
     searchPattern.value = pattern
     try {
-      const response = await redisApi.listKeys(pattern, newCursor, count)
-      const result: KeysResult = response.data
+      const result = await redisApi.listKeys(pattern, newCursor, count) as KeysResult
       if (newCursor === 0) {
         keys.value = result.keys || []
       } else {
@@ -67,8 +66,8 @@ export const useRedisStore = defineStore('redis', () => {
   async function fetchKey(key: string) {
     loading.value = true
     try {
-      const response = await redisApi.getKey(key)
-      currentKey.value = response.data
+      const data = await redisApi.getKey(key) as KeyInfo
+      currentKey.value = data
     } catch (e) {
       error.value = (e as Error).message
       currentKey.value = null

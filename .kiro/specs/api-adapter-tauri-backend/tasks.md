@@ -229,3 +229,58 @@
     - 在适配器配置中启用 redis 模块
     - 测试所有 Redis 功能
     - _Requirements: 7.1, 7.3_
+
+## Phase 11: K8s 集群支持 (客户端模式)
+
+- [ ] 11. 实现 K8s 集群管理支持
+  - [ ] 11.1 实现 Cluster Rust 数据模型和存储
+    - 在 `src-tauri/src/db/models.rs` 添加 `Cluster` 结构体
+    - 在 SQLite 中创建 clusters 表
+    - 添加 connections 表的 cluster_id 外键和 K8s 相关字段
+    - _Requirements: 集群管理基础存储_
+
+  - [ ] 11.2 实现 Cluster Rust 服务
+    - 创建 `src-tauri/src/services/cluster.rs`
+    - 实现 `get_all`, `get_by_id`, `create`, `update`, `delete` 方法
+    - 实现 `get_connections_by_cluster` 方法
+    - _Requirements: 集群 CRUD 操作_
+
+  - [ ] 11.3 实现 Cluster Tauri 命令
+    - 创建 `src-tauri/src/commands/cluster.rs`
+    - 实现所有集群管理命令
+    - 注册到 lib.rs
+    - _Requirements: IPC 命令暴露_
+
+  - [ ] 11.4 实现 K8s 服务发现 Rust 服务
+    - 添加 `kube` 依赖到 Cargo.toml
+    - 创建 `src-tauri/src/services/k8s.rs`
+    - 实现 kubeconfig 解析和集群列表
+    - 实现服务发现（MySQL/Redis pods）
+    - _Requirements: K8s API 集成_
+
+  - [ ] 11.5 实现端口转发 Rust 服务
+    - 创建 `src-tauri/src/services/portforward.rs`
+    - 使用 kube-rs 的端口转发 API
+    - 实现 `create`, `list`, `stop`, `reconnect` 方法
+    - 实现空闲超时监控
+    - _Requirements: 本地端口转发_
+
+  - [ ] 11.6 实现 K8s/PortForward Tauri 命令
+    - 创建 `src-tauri/src/commands/k8s.rs`
+    - 实现 k8s_discover, k8s_list_clusters, k8s_import_connections 命令
+    - 创建 `src-tauri/src/commands/portforward.rs`
+    - 实现端口转发管理命令
+    - _Requirements: IPC 命令暴露_
+
+  - [ ] 11.7 更新 IPC 适配器
+    - 更新 `src/api/adapters/ipc/index.ts` 中的 IpcClusterApi
+    - 实现 IpcK8sApi
+    - 实现 IpcPortForwardApi
+    - _Requirements: 前端 IPC 调用_
+
+  - [ ] 11.8 端到端测试
+    - 在 Tauri 模式下测试集群管理
+    - 测试 K8s 服务发现
+    - 测试端口转发功能
+    - 验证 MySQL/Redis 通过端口转发连接
+    - _Requirements: 功能验证_

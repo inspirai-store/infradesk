@@ -90,8 +90,12 @@ async function executeQuery() {
     limitWasApplied.value = limitedSQL !== originalSQL
     actualExecutedSQL.value = limitedSQL
 
-    const response = await mysqlApi.executeQuery(selectedDatabase.value, limitedSQL)
-    const result = response.data
+    const result = await mysqlApi.executeQuery(selectedDatabase.value, limitedSQL) as {
+      columns?: string[];
+      rows?: Record<string, unknown>[];
+      rows_affected?: number;
+      duration_ms?: number;
+    }
 
     if (result.columns) {
       results.value = result.rows || []

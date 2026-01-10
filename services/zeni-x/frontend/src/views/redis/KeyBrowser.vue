@@ -248,18 +248,18 @@ async function handleCreate() {
 }
 
 async function handleExport() {
-  const keys = selectedKeys.value.length > 0 
-    ? selectedKeys.value 
+  const keys = selectedKeys.value.length > 0
+    ? selectedKeys.value
     : store.keys.map(k => k.key)
-    
+
   if (keys.length === 0) {
     message.warning('没有可导出的 Key')
     return
   }
-  
+
   try {
-    const response = await redisApi.exportKeys(keys)
-    const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' })
+    const data = await redisApi.exportKeys(keys)
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url

@@ -340,8 +340,7 @@ const tableColumns = computed<DataTableColumns<Record<string, unknown>>>(() => {
 async function fetchData() {
   loading.value = true
   try {
-    const response = await mysqlApi.getRows(database.value, table.value, page.value, pageSize.value)
-    const result = response.data
+    const result = await mysqlApi.getRows(database.value, table.value, page.value, pageSize.value) as { rows?: Record<string, unknown>[]; columns?: string[]; total: number }
     rows.value = result.rows || []
     columns.value = result.columns || []
     total.value = result.total
@@ -401,8 +400,8 @@ async function handleAddRow() {
 
 async function handleExport() {
   try {
-    const response = await mysqlApi.exportData(database.value, table.value, 'json')
-    const blob = new Blob([JSON.stringify(response.data, null, 2)], { type: 'application/json' })
+    const data = await mysqlApi.exportData(database.value, table.value, 'json')
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url

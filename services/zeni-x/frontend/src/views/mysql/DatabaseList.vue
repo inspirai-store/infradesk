@@ -69,8 +69,7 @@ async function executeQuickQuery() {
     const limitedSQL = store.applyLimit(quickQuery.value)
     actualExecutedSQL.value = limitedSQL
 
-    const response = await mysqlApi.executeQuery('', limitedSQL)
-    const result = response.data
+    const result = await mysqlApi.executeQuery('', limitedSQL) as { columns?: string[]; rows?: Record<string, unknown>[]; duration_ms?: number }
 
     if (result.columns) {
       queryResults.value = result.rows || []

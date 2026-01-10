@@ -44,9 +44,9 @@ export const useHistoryStore = defineStore('history', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await historyApi.getHistory(filters.value)
-      history.value = response.data.history || []
-      historyTotal.value = response.data.total || 0
+      const data = await historyApi.getHistory(filters.value)
+      history.value = data.history || []
+      historyTotal.value = data.total || 0
     } catch (e) {
       error.value = (e as Error).message
     } finally {
@@ -97,9 +97,9 @@ export const useHistoryStore = defineStore('history', () => {
    */
   async function cleanupOldHistory(days: number) {
     try {
-      const response = await historyApi.cleanupHistory(days)
+      const data = await historyApi.cleanupHistory(days)
       await fetchHistory(true)
-      return response.data.deleted
+      return data.deleted
     } catch (e) {
       throw e
     }
@@ -112,8 +112,8 @@ export const useHistoryStore = defineStore('history', () => {
     loading.value = true
     error.value = null
     try {
-      const response = await savedQueryApi.getSavedQueries(selectedCategory.value)
-      savedQueries.value = response.data || []
+      const data = await savedQueryApi.getSavedQueries(selectedCategory.value)
+      savedQueries.value = data || []
     } catch (e) {
       error.value = (e as Error).message
     } finally {
@@ -133,9 +133,9 @@ export const useHistoryStore = defineStore('history', () => {
     category?: string
   }) {
     try {
-      const response = await savedQueryApi.createSavedQuery(data)
-      savedQueries.value.push(response.data)
-      return response.data
+      const result = await savedQueryApi.createSavedQuery(data)
+      savedQueries.value.push(result)
+      return result
     } catch (e) {
       throw e
     }
@@ -151,10 +151,10 @@ export const useHistoryStore = defineStore('history', () => {
     category?: string
   }) {
     try {
-      const response = await savedQueryApi.updateSavedQuery(id, data)
+      const result = await savedQueryApi.updateSavedQuery(id, data)
       const index = savedQueries.value.findIndex(q => q.id === id)
       if (index !== -1) {
-        savedQueries.value[index] = response.data
+        savedQueries.value[index] = result
       }
     } catch (e) {
       throw e

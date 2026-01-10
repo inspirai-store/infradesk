@@ -1,296 +1,52 @@
-import axios from 'axios'
-import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
+/**
+ * Unified API Module
+ *
+ * This module exports API interfaces that work seamlessly in both
+ * Web (HTTP) and Tauri (IPC) environments using the adapter pattern.
+ */
 
-const api: AxiosInstance = axios.create({
-  baseURL: '/api',
-  timeout: 30000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
-})
+import { getApiAdapter } from './adapter'
+import { setActiveConnectionId as httpSetActiveConnectionId, getActiveConnectionId as httpGetActiveConnectionId } from './adapters/http'
 
-// Active connection IDs per type (managed by connection store)
-let activeConnectionIds: Record<string, number | null> = {}
+// ==================== Active Connection Management ====================
 
-// Function to set active connection ID (called by connection store)
-export function setActiveConnectionId(type: string, id: number | null) {
-  activeConnectionIds[type] = id
+/**
+ * Set active connection ID for a type
+ */
+export function setActiveConnectionId(type: string, id: number | null): void {
+  httpSetActiveConnectionId(type, id)
 }
 
-// Function to get active connection ID
+/**
+ * Get active connection ID for a type
+ */
 export function getActiveConnectionId(type: string): number | null {
-  return activeConnectionIds[type] ?? null
+  return httpGetActiveConnectionId(type)
 }
 
-// Request interceptor to inject X-Connection-ID header
-api.interceptors.request.use(
-  (config: InternalAxiosRequestConfig) => {
-    // Determine connection type based on URL
-    const url = config.url || ''
-    let connectionType: string | null = null
-    
-    if (url.startsWith('/mysql')) {
-      connectionType = 'mysql'
-    } else if (url.startsWith('/redis')) {
-      connectionType = 'redis'
-    } else if (url.startsWith('/mongodb')) {
-      connectionType = 'mongodb'
-    } else if (url.startsWith('/minio')) {
-      connectionType = 'minio'
-    }
-    
-    if (connectionType) {
-      const connId = activeConnectionIds[connectionType]
-      if (connId) {
-        config.headers.set('X-Connection-ID', connId.toString())
-      }
-    }
-    
-    return config
-  },
-  (error) => Promise.reject(error)
-)
+// ==================== API Exports ====================
 
-// Response interceptor
-api.interceptors.response.use(
-  (response) => response,
-  (error) => {
-    const message = error.response?.data?.error || error.message || 'Unknown error'
-    return Promise.reject(new Error(message))
-  }
-)
+// Get adapter instance
+const adapter = getApiAdapter()
 
-export default api
+// Export individual API modules for backward compatibility
+export const connectionApi = adapter.connection
+export const clusterApi = adapter.cluster
+export const mysqlApi = adapter.mysql
+export const redisApi = adapter.redis
+export const historyApi = adapter.history
+export const savedQueryApi = adapter.savedQuery
+export const k8sApi = adapter.k8s
+export const portForwardApi = adapter.portForward
 
-// ==================== Connection Management API ====================
-export const connectionApi = {
-  // Get all connections
-  getAll: () => api.get<Connection[]>('/connections'),
-  
-  // Get single connection
-  getById: (id: number) => api.get<Connection>(`/connections/${id}`),
-  
-  // Create connection
-  create: (data: Connection) => api.post<Connection>('/connections', data),
-  
-  // Update connection
-  update: (id: number, data: Connection) => api.put<Connection>(`/connections/${id}`, data),
-  
-  // Delete connection
-  delete: (id: number) => api.delete(`/connections/${id}`),
-  
-  // Test connection
-  test: (data: Connection) => api.post<TestConnectionResult>('/connections/test', data),
-  
-  // Test K8s connection (temporary port-forward)
-  testK8s: (data: TestK8sConnectionRequest) => api.post<TestConnectionResult>('/connections/test-k8s', data),
-
-  // Get connections by type
-  getByType: (type: string) => api.get<Connection[]>(`/connections/types/${type}`),
-}
-
-// ==================== Cluster API ====================
-export const clusterApi = {
-  // Get all clusters
-  getAll: () => api.get<Cluster[]>('/clusters'),
-  
-  // Create cluster
-  create: (data: Partial<Cluster>) => api.post<Cluster>('/clusters', data),
-  
-  // Update cluster
-  update: (id: number, data: Partial<Cluster>) => api.put<Cluster>(`/clusters/${id}`, data),
-  
-  // Delete cluster
-  delete: (id: number) => api.delete(`/clusters/${id}`),
-}
-
-// ==================== MySQL API ====================
-export const mysqlApi = {
-  getInfo: () => api.get('/mysql/info'),
-
-  // Databases
-  listDatabases: () => api.get('/mysql/databases'),
-  createDatabase: (data: CreateDatabaseRequest) => api.post('/mysql/databases', data),
-  alterDatabase: (name: string, data: AlterDatabaseRequest) => api.put(`/mysql/databases/${name}`, data),
-  grantPrivileges: (name: string, data: GrantPrivilegesRequest) => api.post(`/mysql/databases/${name}/grant`, data),
-  dropDatabase: (name: string) => api.delete(`/mysql/databases/${name}`),
-
-  // Tables
-  listTables: (database: string) => api.get(`/mysql/databases/${database}/tables`),
-  createTable: (database: string, data: CreateTableRequest) =>
-    api.post(`/mysql/databases/${database}/tables`, data),
-  dropTable: (database: string, table: string) =>
-    api.delete(`/mysql/databases/${database}/tables/${table}`),
-
-  // Schema
-  getTableSchema: (database: string, table: string) =>
-    api.get(`/mysql/databases/${database}/tables/${table}/schema`),
-  getDatabaseSchema: (database: string) =>
-    api.get(`/mysql/databases/${database}/schema`),
-  alterTable: (database: string, table: string, data: AlterTableRequest) =>
-    api.put(`/mysql/databases/${database}/tables/${table}/schema`, data),
-  getTablePrimaryKey: (database: string, table: string) =>
-    api.get<{ primary_key: string }>(`/mysql/databases/${database}/tables/${table}/primary-key`),
-
-  // Data
-  getRows: (database: string, table: string, page = 1, size = 50) =>
-    api.get(`/mysql/databases/${database}/tables/${table}/rows`, { params: { page, size } }),
-  insertRow: (database: string, table: string, data: Record<string, unknown>) =>
-    api.post(`/mysql/databases/${database}/tables/${table}/rows`, data),
-  updateRow: (database: string, table: string, data: UpdateRowRequest) =>
-    api.put(`/mysql/databases/${database}/tables/${table}/rows`, data),
-  updateRecord: (database: string, table: string, primaryKey: string, primaryValue: unknown, updates: Record<string, unknown>) =>
-    api.put(`/mysql/databases/${database}/tables/${table}/record`, {
-      primary_key: primaryKey,
-      primary_value: primaryValue,
-      updates
-    }),
-  deleteRow: (database: string, table: string, where: Record<string, unknown>) =>
-    api.delete(`/mysql/databases/${database}/tables/${table}/rows`, { data: where }),
-
-  // Query
-  executeQuery: (database: string, query: string) =>
-    api.post('/mysql/query', { database, query }),
-
-  // Export/Import
-  exportData: (database: string, table: string, format = 'json') =>
-    api.post('/mysql/export', { database, table, format }),
-  importData: (database: string, table: string, rows: Record<string, unknown>[]) =>
-    api.post('/mysql/import', { database, table, rows }),
-
-  // 用户管理
-  listUsers: () => api.get<UserInfo[]>('/mysql/users'),
-  createUser: (data: CreateUserRequest) => api.post('/mysql/users', data),
-  listUserGrants: (username: string, host?: string) =>
-    api.get('/mysql/users/grants', { params: { username, host } }),
-}
-
-// ==================== Redis API ====================
-export const redisApi = {
-  getInfo: () => api.get('/redis/info'),
-  
-  // Keys
-  listKeys: (pattern = '*', cursor = 0, count = 100) => 
-    api.get('/redis/keys', { params: { pattern, cursor, count } }),
-  getKey: (key: string) => api.get(`/redis/keys/${encodeURIComponent(key)}`),
-  setKey: (data: SetKeyRequest) => api.post('/redis/keys', data),
-  updateKey: (key: string, data: SetKeyRequest) => 
-    api.put(`/redis/keys/${encodeURIComponent(key)}`, data),
-  deleteKey: (key: string) => api.delete(`/redis/keys/${encodeURIComponent(key)}`),
-  
-  // TTL
-  setTTL: (key: string, ttl: number) => 
-    api.put(`/redis/ttl/${encodeURIComponent(key)}`, { ttl }),
-  
-  // Export/Import
-  exportKeys: (keys: string[]) => api.post('/redis/export', { keys }),
-  importKeys: (data: ExportData) => api.post('/redis/import', data),
-}
-
-// ==================== System API ====================
+// Legacy system API (maps to connection API)
 export const systemApi = {
-  getConnections: () => api.get('/connections'),
-  createConnection: (data: Connection) => api.post('/connections', data),
+  getConnections: () => adapter.connection.getAll(),
+  createConnection: (data: Connection) => adapter.connection.create(data),
 }
 
-// ==================== Query History API ====================
-export const historyApi = {
-  // 获取查询历史记录（支持过滤和分页）
-  getHistory: (params?: {
-    type?: string
-    database?: string
-    status?: string
-    keyword?: string
-    limit?: number
-    offset?: number
-  }) => api.get<QueryHistoryListResponse>('/history', { params }),
-
-  // 添加查询历史记录
-  addHistory: (data: AddQueryHistoryRequest) =>
-    api.post<QueryHistory>('/history', data),
-
-  // 删除指定历史记录
-  deleteHistory: (id: number) => api.delete(`/history/${id}`),
-
-  // 清理旧的历史记录
-  cleanupHistory: (days: number) =>
-    api.post<{ deleted: number }>('/history/cleanup', { days }),
-}
-
-// ==================== Saved Queries API ====================
-export const savedQueryApi = {
-  // 获取收藏的查询（支持分类过滤）
-  getSavedQueries: (category?: string) =>
-    api.get<SavedQuery[]>('/saved-queries', { params: { category } }),
-
-  // 创建收藏的查询
-  createSavedQuery: (data: CreateSavedQueryRequest) =>
-    api.post<SavedQuery>('/saved-queries', data),
-
-  // 更新收藏的查询
-  updateSavedQuery: (id: number, data: UpdateSavedQueryRequest) =>
-    api.put<SavedQuery>(`/saved-queries/${id}`, data),
-
-  // 删除收藏的查询
-  deleteSavedQuery: (id: number) => api.delete(`/saved-queries/${id}`),
-}
-
-// ==================== K8s Service Discovery API ====================
-export const k8sApi = {
-  // Discover middleware services in Kubernetes cluster
-  // Note: This may take a while in large clusters, using 60s timeout
-  // Can provide kubeconfig content and context for discovery
-  discover: (kubeconfig?: string, context?: string, signal?: AbortSignal) => 
-    api.post<DiscoveredService[]>('/k8s/discover', { kubeconfig, context }, { 
-      timeout: 60000,
-      signal 
-    }),
-  
-  // List clusters from kubeconfig
-  listClusters: (kubeconfig: string) =>
-    api.post<{ clusters: string[] }>('/k8s/clusters', { kubeconfig }),
-  
-  // Batch import discovered services as connections
-  importConnections: (services: DiscoveredService[], forceOverride?: boolean, kubeconfig?: string, context?: string, clusterName?: string) => 
-    api.post<ImportConnectionsResponse>('/k8s/import', { 
-      services,
-      force_override: forceOverride || false,
-      kubeconfig,
-      context,
-      cluster_name: clusterName
-    }),
-}
-
-// ==================== Port Forward API ====================
-export const portForwardApi = {
-  // Create port forward
-  create: (connectionId: number, namespace: string, serviceName: string, remotePort: number) =>
-    api.post<ForwardInfo>('/port-forward', {
-      connection_id: connectionId,
-      namespace,
-      service_name: serviceName,
-      remote_port: remotePort,
-    }),
-  
-  // List all forwards
-  list: () => api.get<ForwardListResponse>('/port-forward'),
-  
-  // Get single forward status
-  get: (id: string) => api.get<ForwardInfo>(`/port-forward/${id}`),
-  
-  // Get forward by connection ID
-  getByConnection: (connectionId: number) => 
-    api.get<ForwardInfo>(`/port-forward/by-connection`, { params: { connection_id: connectionId } }),
-  
-  // Stop forward
-  stop: (id: string) => api.delete(`/port-forward/${id}`),
-  
-  // Reconnect forward
-  reconnect: (id: string) => api.post<ForwardInfo>(`/port-forward/${id}/reconnect`),
-  
-  // Update last used time
-  touch: (id: string) => api.put(`/port-forward/${id}/touch`),
-}
+// Export default axios instance for any custom usage (HTTP mode only)
+export { default } from './adapters/http'
 
 // ==================== Types ====================
 export interface CreateDatabaseRequest {
@@ -436,6 +192,7 @@ export interface DiscoveredService {
   password?: string
   database?: string
   has_credentials: boolean
+  service_name: string
 }
 
 export interface ImportConnectionsResponse {
@@ -532,4 +289,3 @@ export interface UpdateSavedQueryRequest {
   description?: string
   category?: string
 }
-

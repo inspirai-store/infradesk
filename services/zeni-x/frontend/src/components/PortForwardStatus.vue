@@ -125,11 +125,11 @@ const statusText = computed(() => {
 // 加载转发信息
 async function loadForwardInfo() {
   if (loading.value) return
-  
+
   try {
     loading.value = true
-    const response = await portForwardApi.getByConnection(props.connectionId)
-    forwardInfo.value = response.data
+    const data = await portForwardApi.getByConnection(props.connectionId)
+    forwardInfo.value = data
   } catch (error: any) {
     // 404 表示没有转发，这是正常的
     if (error.response?.status !== 404) {
@@ -144,11 +144,11 @@ async function loadForwardInfo() {
 // 重新连接
 async function handleReconnect() {
   if (!forwardInfo.value) return
-  
+
   reconnecting.value = true
   try {
-    const response = await portForwardApi.reconnect(forwardInfo.value.id)
-    forwardInfo.value = response.data
+    const data = await portForwardApi.reconnect(forwardInfo.value.id)
+    forwardInfo.value = data
     message.success('端口转发已重新连接')
   } catch (error: any) {
     message.error(`重新连接失败: ${error.message}`)

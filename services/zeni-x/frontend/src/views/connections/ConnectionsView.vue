@@ -80,8 +80,8 @@ const clusterOptions = computed(() => {
 async function fetchClusters() {
   loadingClusters.value = true
   try {
-    const response = await clusterApi.getAll()
-    clusters.value = response.data || []
+    const data = await clusterApi.getAll()
+    clusters.value = data || []
   } catch (e) {
     console.error('Failed to fetch clusters:', e)
   } finally {
@@ -212,7 +212,7 @@ async function handleTest() {
     let result
     if (connectionMethod.value === 'k8s') {
       // K8s 临时测试
-      result = (await connectionApi.testK8s({
+      result = await connectionApi.testK8s({
         type: formModel.value.type,
         username: formModel.value.username,
         password: formModel.value.password,
@@ -222,7 +222,7 @@ async function handleTest() {
         k8s_namespace: formModel.value.k8s_namespace || '',
         k8s_service_name: formModel.value.k8s_service_name || '',
         k8s_service_port: formModel.value.k8s_service_port || 0,
-      })).data
+      })
     } else {
       // 直连测试
       result = await store.testConnection(formModel.value)
@@ -253,12 +253,12 @@ async function handleSubmit() {
           message.error('请上传 Kubeconfig')
           return
         }
-        const clusterResp = await clusterApi.create({
+        const cluster = await clusterApi.create({
           name: `Cluster-${Date.now()}`, // 简单生成个名字，或者让用户输
           kubeconfig: kubeconfigContent.value,
           context: selectedK8sContext.value,
         })
-        data.cluster_id = clusterResp.data.id
+        data.cluster_id = cluster.id
       }
       
       // K8s 模式下 Host 默认为 localhost，Port 为 0 (等待转发)
