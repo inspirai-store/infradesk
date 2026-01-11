@@ -466,13 +466,15 @@ class HttpPortForwardApi implements IPortForwardApi {
     connectionId: number,
     namespace: string,
     serviceName: string,
-    remotePort: number
+    remotePort: number,
+    localPort?: number
   ): Promise<ForwardInfo> {
     const response = await api.post<ForwardInfo>('/port-forward', {
       connection_id: connectionId,
       namespace,
       service_name: serviceName,
       remote_port: remotePort,
+      local_port: localPort && localPort > 0 ? localPort : undefined,
     })
     return response.data
   }
@@ -498,8 +500,10 @@ class HttpPortForwardApi implements IPortForwardApi {
     await api.delete(`/port-forward/${id}`)
   }
 
-  async reconnect(id: string): Promise<ForwardInfo> {
-    const response = await api.post<ForwardInfo>(`/port-forward/${id}/reconnect`)
+  async reconnect(id: string, localPort?: number): Promise<ForwardInfo> {
+    const response = await api.post<ForwardInfo>(`/port-forward/${id}/reconnect`, {
+      local_port: localPort && localPort > 0 ? localPort : undefined,
+    })
     return response.data
   }
 

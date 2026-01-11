@@ -22,10 +22,10 @@ export const ipcEnabledModules = {
   cluster: true,      // K8s cluster management - implemented
   mysql: true,        // MySQL operations - implemented
   redis: true,        // Redis operations - implemented
-  history: false,     // Query history - not implemented yet
-  savedQuery: false,  // Saved queries - not implemented yet
+  history: true,      // Query history - implemented
+  savedQuery: true,   // Saved queries - implemented
   k8s: true,          // K8s service discovery - implemented
-  portForward: false, // Port forwarding - not implemented yet (desktop uses direct connection)
+  portForward: true,  // Port forwarding - implemented via kube-rs
 }
 
 // Singleton adapter instance

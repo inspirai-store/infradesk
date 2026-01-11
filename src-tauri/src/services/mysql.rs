@@ -29,12 +29,36 @@ pub struct MysqlService {
 impl MysqlService {
     /// Create a new MySQL service by connecting to the database
     pub async fn connect(conn: &Connection) -> AppResult<Self> {
+        use urlencoding::encode;
+
         let password = conn.password.as_deref().unwrap_or("");
         let username = conn.username.as_deref().unwrap_or("root");
 
+        // For K8s connections, use forward_local_port if available (port forwarding active)
+        // Otherwise fall back to the original port
+        let effective_port = conn
+            .forward_local_port
+            .filter(|&p| p > 0)
+            .unwrap_or(conn.port);
+
+        log::info!(
+            "MysqlService::connect - connection_id: {:?}, username: {}, password provided: {}, password length: {}, host: {}, port: {} (forward_local_port: {:?})",
+            conn.id,
+            username,
+            !password.is_empty(),
+            password.len(),
+            conn.host,
+            effective_port,
+            conn.forward_local_port
+        );
+
+        // URL-encode username and password to handle special characters like / @ :
+        let encoded_username = encode(username);
+        let encoded_password = encode(password);
+
         let url = format!(
             "mysql://{}:{}@{}:{}",
-            username, password, conn.host, conn.port
+            encoded_username, encoded_password, conn.host, effective_port
         );
 
         let pool = MySqlPoolOptions::new()
@@ -67,14 +91,23 @@ impl MysqlService {
 
     /// List all databases
     pub async fn list_databases(&self) -> AppResult<Vec<MysqlDatabase>> {
-        let rows: Vec<(String,)> = sqlx::query_as("SHOW DATABASES")
+        // Use raw query to handle VARBINARY return type from some MySQL configurations
+        let rows = sqlx::query("SHOW DATABASES")
             .fetch_all(&self.pool)
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
 
         let mut databases = Vec::new();
 
-        for (name,) in rows {
+        for row in rows {
+            // Try to get as String first, then as bytes if that fails
+            let name: String = row
+                .try_get::<String, _>(0)
+                .or_else(|_| {
+                    row.try_get::<Vec<u8>, _>(0)
+                        .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+                })
+                .map_err(|e| AppError::Database(e.to_string()))?;
             // Skip system databases for cleaner display
             if name == "information_schema" || name == "performance_schema" || name == "sys" {
                 continue;
@@ -172,6 +205,29 @@ impl MysqlService {
         Ok(())
     }
 
+    /// Helper function to extract string from row that might be VARCHAR or VARBINARY
+    fn get_string_from_row(row: &MySqlRow, column: &str) -> String {
+        row.try_get::<String, _>(column)
+            .or_else(|_| {
+                row.try_get::<Vec<u8>, _>(column)
+                    .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+            })
+            .unwrap_or_default()
+    }
+
+    /// Helper function to extract optional string from row
+    fn get_optional_string_from_row(row: &MySqlRow, column: &str) -> Option<String> {
+        row.try_get::<Option<String>, _>(column)
+            .ok()
+            .flatten()
+            .or_else(|| {
+                row.try_get::<Option<Vec<u8>>, _>(column)
+                    .ok()
+                    .flatten()
+                    .map(|bytes| String::from_utf8_lossy(&bytes).to_string())
+            })
+    }
+
     /// List tables in a database
     pub async fn list_tables(&self, database: &str) -> AppResult<Vec<MysqlTable>> {
         let query = format!(
@@ -197,12 +253,12 @@ impl MysqlService {
         let tables = rows
             .iter()
             .map(|row| MysqlTable {
-                name: row.get("name"),
-                engine: row.get("engine"),
-                row_count: row.get::<Option<i64>, _>("row_count").unwrap_or(0),
-                data_size: row.get::<Option<i64>, _>("data_size").unwrap_or(0),
-                index_size: row.get::<Option<i64>, _>("index_size").unwrap_or(0),
-                comment: row.get("comment"),
+                name: Self::get_string_from_row(row, "name"),
+                engine: Self::get_optional_string_from_row(row, "engine"),
+                row_count: row.try_get::<Option<i64>, _>("row_count").ok().flatten().unwrap_or(0),
+                data_size: row.try_get::<Option<i64>, _>("data_size").ok().flatten().unwrap_or(0),
+                index_size: row.try_get::<Option<i64>, _>("index_size").ok().flatten().unwrap_or(0),
+                comment: Self::get_optional_string_from_row(row, "comment"),
             })
             .collect();
 
@@ -263,13 +319,13 @@ impl MysqlService {
         let columns = rows
             .iter()
             .map(|row| MysqlColumn {
-                name: row.get("name"),
-                column_type: row.get("type"),
-                nullable: row.get::<String, _>("nullable") == "YES",
-                key: row.get("key"),
-                default: row.get("default"),
-                extra: row.get("extra"),
-                comment: row.get("comment"),
+                name: Self::get_string_from_row(row, "name"),
+                column_type: Self::get_string_from_row(row, "type"),
+                nullable: Self::get_string_from_row(row, "nullable") == "YES",
+                key: Self::get_optional_string_from_row(row, "key"),
+                default: Self::get_optional_string_from_row(row, "default"),
+                extra: Self::get_optional_string_from_row(row, "extra"),
+                comment: Self::get_optional_string_from_row(row, "comment"),
             })
             .collect();
 
@@ -299,10 +355,10 @@ impl MysqlService {
         let mut index_map: HashMap<String, MysqlIndex> = HashMap::new();
 
         for row in &rows {
-            let name: String = row.get("name");
-            let column_name: String = row.get("column_name");
-            let non_unique: i32 = row.get("non_unique");
-            let index_type: String = row.get("index_type");
+            let name = Self::get_string_from_row(row, "name");
+            let column_name = Self::get_string_from_row(row, "column_name");
+            let non_unique: i32 = row.try_get("non_unique").unwrap_or(1);
+            let index_type = Self::get_string_from_row(row, "index_type");
 
             index_map
                 .entry(name.clone())
@@ -615,8 +671,8 @@ fn detect_query_type(query: &str) -> String {
     }
 }
 
-/// Convert MySQL rows to JSON format
-fn mysql_rows_to_json(rows: &[MySqlRow]) -> (Vec<String>, Vec<Vec<JsonValue>>) {
+/// Convert MySQL rows to JSON format (returns objects with column names as keys)
+fn mysql_rows_to_json(rows: &[MySqlRow]) -> (Vec<String>, Vec<HashMap<String, JsonValue>>) {
     if rows.is_empty() {
         return (vec![], vec![]);
     }
@@ -628,13 +684,13 @@ fn mysql_rows_to_json(rows: &[MySqlRow]) -> (Vec<String>, Vec<Vec<JsonValue>>) {
         .map(|c| c.name().to_string())
         .collect();
 
-    // Convert each row to JSON values
-    let json_rows: Vec<Vec<JsonValue>> = rows
+    // Convert each row to JSON object with column names as keys
+    let json_rows: Vec<HashMap<String, JsonValue>> = rows
         .iter()
         .map(|row| {
             row.columns()
                 .iter()
-                .map(|col| mysql_value_to_json(row, col))
+                .map(|col| (col.name().to_string(), mysql_value_to_json(row, col)))
                 .collect()
         })
         .collect();

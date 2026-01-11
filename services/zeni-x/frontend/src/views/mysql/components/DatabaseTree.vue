@@ -142,13 +142,12 @@ const treeData = computed<TreeOption[]>(() => {
         icon: () => h(NIcon, { size: 12 }, { default: () => h(RefreshOutline) })
       }) : null,
     ]),
-    children: store.currentDatabase === db.name ?
-      store.tables.map(table => ({
-        key: `${db.name}/${table.name}`,
-        label: table.name,
-        prefix: () => h(NIcon, { color: '#8B5CF6', size: 14 }, { default: () => h(GridOutline) }),
-        isLeaf: true,
-      })) : [],
+    children: store.getTablesForDatabase(db.name).map(table => ({
+      key: `${db.name}/${table.name}`,
+      label: table.name,
+      prefix: () => h(NIcon, { color: '#8B5CF6', size: 14 }, { default: () => h(GridOutline) }),
+      isLeaf: true,
+    })),
   }))
 })
 

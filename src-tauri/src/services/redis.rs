@@ -28,10 +28,27 @@ impl RedisService {
         let password = conn.password.as_deref().unwrap_or("");
         let db = conn.database_name.as_deref().unwrap_or("0");
 
+        // For K8s connections, use forward_local_port if available (port forwarding active)
+        // Otherwise fall back to the original port
+        let effective_port = conn
+            .forward_local_port
+            .filter(|&p| p > 0)
+            .unwrap_or(conn.port);
+
+        log::info!(
+            "RedisService::connect - connection_id: {:?}, password provided: {}, password length: {}, host: {}, port: {} (forward_local_port: {:?})",
+            conn.id,
+            !password.is_empty(),
+            password.len(),
+            conn.host,
+            effective_port,
+            conn.forward_local_port
+        );
+
         let url = if password.is_empty() {
-            format!("redis://{}:{}/{}", conn.host, conn.port, db)
+            format!("redis://{}:{}/{}", conn.host, effective_port, db)
         } else {
-            format!("redis://:{}@{}:{}/{}", password, conn.host, conn.port, db)
+            format!("redis://:{}@{}:{}/{}", password, conn.host, effective_port, db)
         };
 
         let client = Client::open(url).map_err(|e| AppError::Connection(e.to_string()))?;

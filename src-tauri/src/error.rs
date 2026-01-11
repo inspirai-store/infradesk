@@ -22,8 +22,8 @@ pub enum AppError {
     #[error("Validation error: {0}")]
     Validation(String),
 
-    #[error("Keyring error: {0}")]
-    Keyring(String),
+    #[error("Crypto error: {0}")]
+    Crypto(String),
 
     #[error("IO error: {0}")]
     Io(String),
@@ -65,12 +65,6 @@ impl From<std::io::Error> for AppError {
     }
 }
 
-// Convert from keyring errors
-impl From<keyring::Error> for AppError {
-    fn from(err: keyring::Error) -> Self {
-        AppError::Keyring(err.to_string())
-    }
-}
 
 // Convert from anyhow errors
 impl From<anyhow::Error> for AppError {

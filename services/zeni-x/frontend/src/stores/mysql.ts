@@ -258,6 +258,11 @@ export const useMySQLStore = defineStore('mysql', () => {
     return fetchedDatabases.value.has(database)
   }
 
+  // 获取指定数据库的缓存表列表
+  function getTablesForDatabase(database: string): Table[] {
+    return tablesCache.value.get(database) || []
+  }
+
   async function fetchTableSchema(database: string, table: string) {
     loading.value = true
     currentTable.value = table
@@ -313,6 +318,7 @@ export const useMySQLStore = defineStore('mysql', () => {
     setCurrentDatabase,
     setCurrentTable,
     hasFetchedTables,
+    getTablesForDatabase,
     loadQueryLimit,
     saveQueryLimit,
     applyLimit,

@@ -278,8 +278,14 @@ export interface IK8sApi {
  * Port forwarding API interface
  */
 export interface IPortForwardApi {
-  /** Create a port forward */
-  create(connectionId: number, namespace: string, serviceName: string, remotePort: number): Promise<import('./index').ForwardInfo>
+  /** Create a port forward
+   * @param connectionId - The connection ID to forward
+   * @param namespace - K8s namespace (used by HTTP adapter)
+   * @param serviceName - K8s service name (used by HTTP adapter)
+   * @param remotePort - Remote port to forward (used by HTTP adapter)
+   * @param localPort - Optional preferred local port. If not provided, auto-assign an available port.
+   */
+  create(connectionId: number, namespace: string, serviceName: string, remotePort: number, localPort?: number): Promise<import('./index').ForwardInfo>
 
   /** List all forwards */
   list(): Promise<import('./index').ForwardListResponse>
@@ -293,8 +299,11 @@ export interface IPortForwardApi {
   /** Stop a forward */
   stop(id: string): Promise<void>
 
-  /** Reconnect a forward */
-  reconnect(id: string): Promise<import('./index').ForwardInfo>
+  /** Reconnect a forward
+   * @param id - The port forward ID to reconnect
+   * @param localPort - Optional preferred local port. If not provided, reuse the existing port.
+   */
+  reconnect(id: string, localPort?: number): Promise<import('./index').ForwardInfo>
 
   /** Update last used time */
   touch(id: string): Promise<void>

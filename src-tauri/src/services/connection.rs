@@ -1,13 +1,13 @@
 //! Connection management service
 //!
 //! This service handles all connection-related business logic including:
-//! - CRUD operations with password management
+//! - CRUD operations with password encryption
 //! - Connection testing for MySQL and Redis
 
 use crate::db::models::{Connection, TestConnectionResult};
 use crate::db::SqlitePool;
 use crate::error::AppResult;
-use crate::services::keyring::KeyringService;
+use crate::services::crypto::CryptoService;
 
 /// Connection management service
 pub struct ConnectionService {
@@ -20,92 +20,129 @@ impl ConnectionService {
         Self { pool }
     }
 
-    /// Get all connections with passwords populated from keyring
+    /// Decrypt password in a connection
+    fn decrypt_password(conn: &mut Connection) {
+        if let Some(encrypted) = &conn.password {
+            if !encrypted.is_empty() {
+                match CryptoService::decrypt(encrypted) {
+                    Ok(decrypted) => {
+                        conn.password = Some(decrypted);
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to decrypt password for connection {:?}: {}", conn.id, e);
+                        conn.password = None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Encrypt password for storage
+    fn encrypt_password(password: Option<&str>) -> Option<String> {
+        password.and_then(|pwd| {
+            if pwd.is_empty() {
+                None
+            } else {
+                match CryptoService::encrypt(pwd) {
+                    Ok(encrypted) => Some(encrypted),
+                    Err(e) => {
+                        log::error!("Failed to encrypt password: {}", e);
+                        None
+                    }
+                }
+            }
+        })
+    }
+
+    /// Get all connections with passwords decrypted
     pub async fn get_all(&self) -> AppResult<Vec<Connection>> {
         let mut connections = self.pool.get_all_connections().await?;
 
-        // Populate passwords from keyring
+        // Decrypt passwords
         for conn in &mut connections {
-            if let Some(id) = conn.id {
-                conn.password = KeyringService::get_password(id)?;
-            }
+            Self::decrypt_password(conn);
         }
 
         Ok(connections)
     }
 
-    /// Get a connection by ID with password populated
+    /// Get a connection by ID with password decrypted
     pub async fn get_by_id(&self, id: i64) -> AppResult<Connection> {
         let mut conn = self.pool.get_connection(id).await?;
-        conn.password = KeyringService::get_password(id)?;
+        Self::decrypt_password(&mut conn);
+        log::info!(
+            "ConnectionService::get_by_id - id: {}, password present: {}, length: {}",
+            id,
+            conn.password.is_some(),
+            conn.password.as_ref().map(|p| p.len()).unwrap_or(0)
+        );
         Ok(conn)
     }
 
-    /// Get connections by type with passwords populated
+    /// Get connections by type with passwords decrypted
     pub async fn get_by_type(&self, conn_type: &str) -> AppResult<Vec<Connection>> {
         let mut connections = self.pool.get_connections_by_type(conn_type).await?;
 
         for conn in &mut connections {
-            if let Some(id) = conn.id {
-                conn.password = KeyringService::get_password(id)?;
-            }
+            Self::decrypt_password(conn);
         }
 
         Ok(connections)
     }
 
-    /// Create a new connection
+    /// Create a new connection with password encrypted
     pub async fn create(&self, mut conn: Connection) -> AppResult<Connection> {
-        // Extract password before saving to DB
-        let password = conn.password.take();
+        // Store original password for return
+        let original_password = conn.password.clone();
+
+        // Encrypt password before saving
+        conn.password = Self::encrypt_password(conn.password.as_deref());
+
+        log::info!(
+            "ConnectionService::create - encrypting password, original length: {}, encrypted length: {}",
+            original_password.as_ref().map(|p| p.len()).unwrap_or(0),
+            conn.password.as_ref().map(|p| p.len()).unwrap_or(0)
+        );
 
         // Create connection in DB
         let mut created = self.pool.create_connection(&conn).await?;
 
-        // Save password to keyring if provided
-        if let (Some(id), Some(pwd)) = (created.id, &password) {
-            if !pwd.is_empty() {
-                KeyringService::save_password(id, pwd)?;
-            }
-        }
-
-        // Return connection with password
-        created.password = password;
+        // Return connection with original (decrypted) password
+        created.password = original_password;
         Ok(created)
     }
 
-    /// Update an existing connection
+    /// Update an existing connection with password encrypted
     pub async fn update(&self, id: i64, mut conn: Connection) -> AppResult<Connection> {
-        // Extract password before saving to DB
-        let password = conn.password.take();
+        // Store original password for return
+        let original_password = conn.password.clone();
+
+        log::info!(
+            "ConnectionService::update - id: {}, password provided: {}, password length: {}",
+            id,
+            original_password.is_some(),
+            original_password.as_ref().map(|p| p.len()).unwrap_or(0)
+        );
+
+        // Encrypt password before saving
+        conn.password = Self::encrypt_password(conn.password.as_deref());
+
+        log::info!(
+            "ConnectionService::update - encrypted password length: {}",
+            conn.password.as_ref().map(|p| p.len()).unwrap_or(0)
+        );
 
         // Update connection in DB
         let mut updated = self.pool.update_connection(id, &conn).await?;
 
-        // Update password in keyring
-        if let Some(pwd) = &password {
-            if !pwd.is_empty() {
-                KeyringService::save_password(id, pwd)?;
-            } else {
-                // Empty password means delete it
-                KeyringService::delete_password(id)?;
-            }
-        }
-
-        // Return connection with password
-        updated.password = password;
+        // Return connection with original (decrypted) password
+        updated.password = original_password;
         Ok(updated)
     }
 
     /// Delete a connection
     pub async fn delete(&self, id: i64) -> AppResult<()> {
-        // Delete from DB first
-        self.pool.delete_connection(id).await?;
-
-        // Delete password from keyring
-        KeyringService::delete_password(id)?;
-
-        Ok(())
+        self.pool.delete_connection(id).await
     }
 
     /// Test a connection without saving
@@ -123,20 +160,25 @@ impl ConnectionService {
     /// Test MySQL connection
     async fn test_mysql(&self, conn: &Connection) -> AppResult<TestConnectionResult> {
         use sqlx::mysql::MySqlPoolOptions;
+        use urlencoding::encode;
 
         let password = conn.password.as_deref().unwrap_or("");
         let username = conn.username.as_deref().unwrap_or("root");
         let database = conn.database_name.as_deref().unwrap_or("");
 
+        // URL-encode username and password to handle special characters like / @ :
+        let encoded_username = encode(username);
+        let encoded_password = encode(password);
+
         let url = if database.is_empty() {
             format!(
                 "mysql://{}:{}@{}:{}",
-                username, password, conn.host, conn.port
+                encoded_username, encoded_password, conn.host, conn.port
             )
         } else {
             format!(
                 "mysql://{}:{}@{}:{}/{}",
-                username, password, conn.host, conn.port, database
+                encoded_username, encoded_password, conn.host, conn.port, database
             )
         };
 

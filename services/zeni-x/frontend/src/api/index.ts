@@ -173,6 +173,7 @@ export interface TestK8sConnectionRequest {
   k8s_namespace: string
   k8s_service_name: string
   k8s_service_port: number
+  cluster_id?: number  // Used to look up kubeconfig from saved cluster
 }
 
 export interface TestConnectionResult {

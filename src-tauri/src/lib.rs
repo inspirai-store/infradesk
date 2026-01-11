@@ -4,13 +4,15 @@
 //! It provides local database storage and direct database connections.
 
 mod commands;
-mod db;
-mod error;
-mod services;
+pub mod db;
+pub mod error;
+pub mod http;
+pub mod services;
 
 use std::path::PathBuf;
 use tauri::Manager;
 
+use commands::PortForwardState;
 use db::SqlitePool;
 
 /// Get the application data directory for database storage
@@ -49,6 +51,8 @@ pub fn run() {
                 Ok(pool) => {
                     log::info!("SQLite database initialized successfully");
                     app.manage(pool);
+                    // Initialize port forward state
+                    app.manage(PortForwardState::new());
                 }
                 Err(e) => {
                     log::error!("Failed to initialize SQLite database: {}", e);
@@ -67,6 +71,7 @@ pub fn run() {
             commands::update_connection,
             commands::delete_connection,
             commands::test_connection,
+            commands::test_k8s_connection,
             // Cluster management
             commands::get_all_clusters,
             commands::get_cluster,
@@ -106,6 +111,24 @@ pub fn run() {
             commands::redis_set_ttl,
             commands::redis_export_keys,
             commands::redis_import_keys,
+            // Port forward operations
+            commands::start_port_forward,
+            commands::stop_port_forward,
+            commands::list_port_forwards,
+            commands::get_port_forward,
+            commands::get_port_forward_by_connection,
+            commands::reconnect_port_forward,
+            commands::touch_port_forward,
+            // Query history operations
+            commands::get_history,
+            commands::add_history,
+            commands::delete_history,
+            commands::cleanup_history,
+            // Saved query operations
+            commands::get_saved_queries,
+            commands::create_saved_query,
+            commands::update_saved_query,
+            commands::delete_saved_query,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

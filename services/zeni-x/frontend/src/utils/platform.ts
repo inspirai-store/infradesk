@@ -38,10 +38,25 @@ export interface PlatformInfo {
 let _isTauriCached: boolean | null = null
 
 /**
+ * Check if API mode is forced via environment variable.
+ *
+ * VITE_API_MODE can be:
+ * - 'web': Force HTTP API mode (useful for debugging without Tauri)
+ * - 'ipc': Use IPC when available (default Tauri behavior)
+ * - undefined: Auto-detect based on runtime environment
+ */
+function isForceWebMode(): boolean {
+  return import.meta.env.VITE_API_MODE === 'web'
+}
+
+/**
  * Check if the application is running in a Tauri desktop environment.
  *
  * This function checks for the presence of the `__TAURI_INTERNALS__` object
  * which is injected by Tauri into the webview context.
+ *
+ * Note: If VITE_API_MODE=web is set, this will always return false to force
+ * HTTP API usage for debugging purposes.
  *
  * @returns true if running in Tauri, false if running in web browser
  *
@@ -59,6 +74,11 @@ let _isTauriCached: boolean | null = null
  * ```
  */
 export function isTauri(): boolean {
+  // Check for forced web mode first
+  if (isForceWebMode()) {
+    return false
+  }
+
   if (_isTauriCached !== null) {
     return _isTauriCached
   }

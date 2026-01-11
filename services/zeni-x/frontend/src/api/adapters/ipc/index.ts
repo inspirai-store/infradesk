@@ -112,9 +112,12 @@ class IpcConnectionApi implements IConnectionApi {
     }
   }
 
-  async testK8s(_data: TestK8sConnectionRequest): Promise<TestConnectionResult> {
-    // K8s testing not supported in Tauri mode
-    throw new Error('K8s connection testing is not supported in desktop mode')
+  async testK8s(data: TestK8sConnectionRequest): Promise<TestConnectionResult> {
+    try {
+      return await invoke<TestConnectionResult>('test_k8s_connection', { data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
   async getByType(type: string): Promise<Connection[]> {
@@ -459,11 +462,7 @@ class IpcRedisApi implements IRedisApi {
 }
 
 class IpcHistoryApi implements IHistoryApi {
-  private notImplemented(): never {
-    throw new Error('History API not implemented in IPC adapter')
-  }
-
-  async getHistory(_params?: {
+  async getHistory(params?: {
     type?: string
     database?: string
     status?: string
@@ -471,41 +470,77 @@ class IpcHistoryApi implements IHistoryApi {
     limit?: number
     offset?: number
   }): Promise<QueryHistoryListResponse> {
-    this.notImplemented()
+    try {
+      return await invoke<QueryHistoryListResponse>('get_history', {
+        connType: params?.type,
+        database: params?.database,
+        status: params?.status,
+        keyword: params?.keyword,
+        limit: params?.limit,
+        offset: params?.offset,
+      })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
-  async addHistory(_data: AddQueryHistoryRequest): Promise<QueryHistory> {
-    this.notImplemented()
+  async addHistory(data: AddQueryHistoryRequest): Promise<QueryHistory> {
+    try {
+      return await invoke<QueryHistory>('add_history', { data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
-  async deleteHistory(_id: number): Promise<void> {
-    this.notImplemented()
+  async deleteHistory(id: number): Promise<void> {
+    try {
+      await invoke('delete_history', { id })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
-  async cleanupHistory(_days: number): Promise<{ deleted: number }> {
-    this.notImplemented()
+  async cleanupHistory(days: number): Promise<{ deleted: number }> {
+    try {
+      const deleted = await invoke<number>('cleanup_history', { days })
+      return { deleted }
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 }
 
 class IpcSavedQueryApi implements ISavedQueryApi {
-  private notImplemented(): never {
-    throw new Error('SavedQuery API not implemented in IPC adapter')
+  async getSavedQueries(category?: string): Promise<SavedQuery[]> {
+    try {
+      return await invoke<SavedQuery[]>('get_saved_queries', { category })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
-  async getSavedQueries(_category?: string): Promise<SavedQuery[]> {
-    this.notImplemented()
+  async createSavedQuery(data: CreateSavedQueryRequest): Promise<SavedQuery> {
+    try {
+      return await invoke<SavedQuery>('create_saved_query', { data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
-  async createSavedQuery(_data: CreateSavedQueryRequest): Promise<SavedQuery> {
-    this.notImplemented()
+  async updateSavedQuery(id: number, data: UpdateSavedQueryRequest): Promise<SavedQuery> {
+    try {
+      return await invoke<SavedQuery>('update_saved_query', { id, data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
-  async updateSavedQuery(_id: number, _data: UpdateSavedQueryRequest): Promise<SavedQuery> {
-    this.notImplemented()
-  }
-
-  async deleteSavedQuery(_id: number): Promise<void> {
-    this.notImplemented()
+  async deleteSavedQuery(id: number): Promise<void> {
+    try {
+      await invoke('delete_saved_query', { id })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 }
 
@@ -562,38 +597,115 @@ class IpcK8sApi implements IK8sApi {
   }
 }
 
+// Rust PortForward struct mapping
+interface RustPortForward {
+  id: string | null
+  connection_id: number
+  namespace: string
+  service_name: string
+  remote_port: number
+  local_port: number
+  status: string
+  error: string | null
+  last_used: string | null
+  created_at: string | null
+}
+
+// Transform Rust PortForward to frontend ForwardInfo
+function transformPortForward(pf: RustPortForward): ForwardInfo {
+  return {
+    id: pf.id || '',
+    connection_id: pf.connection_id,
+    local_host: '127.0.0.1',
+    local_port: pf.local_port,
+    remote_host: `${pf.service_name}.${pf.namespace}.svc.cluster.local`,
+    remote_port: pf.remote_port,
+    status: (pf.status === 'active' ? 'active' : pf.status === 'error' ? 'error' : 'idle') as 'active' | 'error' | 'idle',
+    created_at: pf.created_at || new Date().toISOString(),
+    last_used_at: pf.last_used || new Date().toISOString(),
+    error_message: pf.error || undefined,
+  }
+}
+
 class IpcPortForwardApi implements IPortForwardApi {
   async create(
-    _connectionId: number,
+    connectionId: number,
     _namespace: string,
     _serviceName: string,
-    _remotePort: number
+    _remotePort: number,
+    localPort?: number
   ): Promise<ForwardInfo> {
-    throw new Error('Port forwarding not supported in desktop mode')
+    try {
+      // In Tauri mode, we start port forward by connection ID
+      // The namespace/service info comes from the connection record
+      // localPort is optional - if not provided or 0, auto-assign an available port
+      const result = await invoke<RustPortForward>('start_port_forward', {
+        connectionId,
+        localPort: localPort && localPort > 0 ? localPort : null
+      })
+      return transformPortForward(result)
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
   async list(): Promise<ForwardListResponse> {
-    throw new Error('Port forwarding not supported in desktop mode')
+    try {
+      const forwards = await invoke<RustPortForward[]>('list_port_forwards')
+      return {
+        forwards: forwards.map(transformPortForward),
+        total: forwards.length,
+      }
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
-  async get(_id: string): Promise<ForwardInfo> {
-    throw new Error('Port forwarding not supported in desktop mode')
+  async get(id: string): Promise<ForwardInfo> {
+    try {
+      const result = await invoke<RustPortForward>('get_port_forward', { id })
+      return transformPortForward(result)
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
-  async getByConnection(_connectionId: number): Promise<ForwardInfo> {
-    throw new Error('Port forwarding not supported in desktop mode')
+  async getByConnection(connectionId: number): Promise<ForwardInfo> {
+    try {
+      const result = await invoke<RustPortForward>('get_port_forward_by_connection', { connectionId })
+      return transformPortForward(result)
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
-  async stop(_id: string): Promise<void> {
-    throw new Error('Port forwarding not supported in desktop mode')
+  async stop(id: string): Promise<void> {
+    try {
+      await invoke('stop_port_forward', { id })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
-  async reconnect(_id: string): Promise<ForwardInfo> {
-    throw new Error('Port forwarding not supported in desktop mode')
+  async reconnect(id: string, localPort?: number): Promise<ForwardInfo> {
+    try {
+      // localPort is optional - if not provided, reuse the existing port
+      const result = await invoke<RustPortForward>('reconnect_port_forward', {
+        id,
+        localPort: localPort && localPort > 0 ? localPort : null
+      })
+      return transformPortForward(result)
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
-  async touch(_id: string): Promise<void> {
-    throw new Error('Port forwarding not supported in desktop mode')
+  async touch(id: string): Promise<void> {
+    try {
+      await invoke('touch_port_forward', { id })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 }
 

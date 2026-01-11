@@ -217,11 +217,12 @@ async function handleTest() {
         username: formModel.value.username,
         password: formModel.value.password,
         database_name: formModel.value.database_name,
-        kubeconfig: kubeconfigContent.value,
-        context: selectedK8sContext.value,
+        kubeconfig: kubeconfigContent.value || undefined,
+        context: selectedK8sContext.value || undefined,
         k8s_namespace: formModel.value.k8s_namespace || '',
         k8s_service_name: formModel.value.k8s_service_name || '',
         k8s_service_port: formModel.value.k8s_service_port || 0,
+        cluster_id: formModel.value.cluster_id || undefined,  // Pass cluster_id for kubeconfig lookup
       })
     } else {
       // 直连测试
@@ -531,6 +532,21 @@ onMounted(() => {
           <NFormItem label="服务端口" path="k8s_service_port">
             <NInputNumber v-model:value="formModel.k8s_service_port" :min="1" :max="65535" style="width: 100%" />
           </NFormItem>
+
+          <NFormItem label="本地端口" path="forward_local_port">
+            <NInputNumber
+              v-model:value="formModel.forward_local_port"
+              :min="0"
+              :max="65535"
+              style="width: 100%"
+              placeholder="留空自动分配"
+            />
+            <template #feedback>
+              <span style="color: var(--zx-text-secondary); font-size: 11px;">
+                端口转发的本地端口，留空或设为 0 则自动分配可用端口
+              </span>
+            </template>
+          </NFormItem>
         </template>
 
         <NFormItem label="用户名" path="username">
@@ -538,10 +554,8 @@ onMounted(() => {
         </NFormItem>
 
         <NFormItem label="密码" path="password">
-          <NInput 
-            v-model:value="formModel.password" 
-            type="password" 
-            show-password-on="click"
+          <NInput
+            v-model:value="formModel.password"
             placeholder="数据库密码"
           />
         </NFormItem>

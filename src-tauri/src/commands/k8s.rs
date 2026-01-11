@@ -10,7 +10,7 @@ use crate::db::models::{
 };
 use crate::db::SqlitePool;
 use crate::error::AppError;
-use crate::services::{ClusterService, K8sService};
+use crate::services::{ClusterService, ConnectionService, K8sService};
 
 /// Discover database services in a K8s cluster
 #[tauri::command]
@@ -142,6 +142,7 @@ pub async fn k8s_import_connections(
             k8s_service_name: Some(service_name),
             k8s_service_port: Some(svc.port),
             cluster_id,
+            forward_local_port: None, // User can set preferred port later
             created_at: None,
             updated_at: None,
         };
@@ -158,16 +159,20 @@ pub async fn k8s_import_connections(
                     && c.k8s_service_name == conn.k8s_service_name
             });
 
+        // Use ConnectionService to properly handle password storage in keyring
+        let conn_service = ConnectionService::new(pool.inner().clone());
+
         if let Some(existing_conn) = existing {
             if request.force_override {
                 // Update existing connection
                 let mut updated_conn = conn.clone();
                 updated_conn.id = existing_conn.id;
                 updated_conn.is_default = existing_conn.is_default;
+                // Restore password for update
+                updated_conn.password = svc.password.clone();
 
-                match pool
-                    .inner()
-                    .update_connection(existing_conn.id.unwrap(), &updated_conn)
+                match conn_service
+                    .update(existing_conn.id.unwrap(), updated_conn)
                     .await
                 {
                     Ok(updated) => {
@@ -189,14 +194,12 @@ pub async fn k8s_import_connections(
                 response.skipped += 1;
             }
         } else {
-            // Create new connection
-            match pool.inner().create_connection(&conn).await {
-                Ok(created) => {
-                    // Store password in keyring if provided
-                    if let (Some(id), Some(password)) = (created.id, &svc.password) {
-                        let _ = crate::services::keyring::KeyringService::save_password(id, password);
-                    }
+            // Create new connection using ConnectionService (handles keyring properly)
+            let mut new_conn = conn.clone();
+            new_conn.password = svc.password.clone();
 
+            match conn_service.create(new_conn).await {
+                Ok(created) => {
                     result.success = true;
                     result.id = created.id;
                     response.success += 1;

@@ -28,9 +28,9 @@ pub struct Connection {
     /// Username for authentication
     pub username: Option<String>,
 
-    /// Password (not stored in SQLite, uses keyring)
-    /// This field is populated from keyring when reading
-    #[sqlx(skip)]
+    /// Encrypted password stored in SQLite
+    /// This field stores the encrypted password, decrypted when reading
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
 
     /// Default database name (for MySQL/MongoDB)
@@ -54,6 +54,11 @@ pub struct Connection {
 
     /// Associated cluster ID (for k8s connections)
     pub cluster_id: Option<i64>,
+
+    /// Preferred local port for port forwarding (0 = auto-assign)
+    #[serde(default)]
+    #[sqlx(default)]
+    pub forward_local_port: Option<i32>,
 
     /// Creation timestamp
     pub created_at: Option<String>,
@@ -93,6 +98,41 @@ impl TestConnectionResult {
             message: None,
         }
     }
+}
+
+/// Request to test a K8s connection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestK8sConnectionRequest {
+    /// Connection type: mysql, redis
+    #[serde(rename = "type")]
+    pub conn_type: String,
+
+    /// Username for authentication
+    pub username: Option<String>,
+
+    /// Password for authentication
+    pub password: Option<String>,
+
+    /// Default database name (for MySQL)
+    pub database_name: Option<String>,
+
+    /// Kubeconfig content (optional if cluster_id is provided)
+    pub kubeconfig: Option<String>,
+
+    /// Kubernetes context name
+    pub context: Option<String>,
+
+    /// Kubernetes namespace
+    pub k8s_namespace: String,
+
+    /// Kubernetes service name
+    pub k8s_service_name: String,
+
+    /// Kubernetes service port
+    pub k8s_service_port: i32,
+
+    /// Cluster ID for looking up kubeconfig from database
+    pub cluster_id: Option<i64>,
 }
 
 // ==================== MySQL Models ====================
@@ -161,8 +201,8 @@ pub struct MysqlTableSchema {
 pub struct MysqlQueryResult {
     /// Column names
     pub columns: Vec<String>,
-    /// Row data as JSON values
-    pub rows: Vec<Vec<serde_json::Value>>,
+    /// Row data as JSON objects with column names as keys
+    pub rows: Vec<std::collections::HashMap<String, serde_json::Value>>,
     /// Number of affected rows (for INSERT/UPDATE/DELETE)
     pub affected_rows: u64,
     /// Execution time in milliseconds
@@ -175,7 +215,7 @@ pub struct MysqlQueryResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MysqlTableData {
     pub columns: Vec<String>,
-    pub rows: Vec<Vec<serde_json::Value>>,
+    pub rows: Vec<std::collections::HashMap<String, serde_json::Value>>,
     pub total: i64,
     pub page: i32,
     pub page_size: i32,
@@ -456,4 +496,113 @@ pub struct SetKeyRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RedisExportData {
     pub keys: Vec<RedisKeyValue>,
+}
+
+// ==================== Query History Models ====================
+
+/// Query history entry
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, Default)]
+pub struct QueryHistory {
+    /// Unique identifier
+    pub id: Option<i64>,
+
+    /// Associated connection ID
+    pub connection_id: i64,
+
+    /// Database name
+    pub database: String,
+
+    /// Query type: select, insert, update, delete, etc.
+    pub query_type: String,
+
+    /// SQL query text
+    pub query_text: String,
+
+    /// Execution timestamp
+    pub executed_at: Option<String>,
+
+    /// Query duration in milliseconds
+    pub duration_ms: i64,
+
+    /// Number of rows affected/returned
+    pub row_count: i64,
+
+    /// Status: success, error
+    pub status: String,
+
+    /// Error message if status is error
+    pub error_message: Option<String>,
+}
+
+/// Query history list response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryHistoryListResponse {
+    pub history: Vec<QueryHistory>,
+    pub total: i64,
+}
+
+/// Add query history request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddQueryHistoryRequest {
+    pub connection_id: i64,
+    pub database: String,
+    pub query_type: String,
+    pub query_text: String,
+    pub duration_ms: i64,
+    pub row_count: i64,
+    pub status: String,
+    pub error_message: Option<String>,
+}
+
+// ==================== Saved Query Models ====================
+
+/// Saved query entry
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, Default)]
+pub struct SavedQuery {
+    /// Unique identifier
+    pub id: Option<i64>,
+
+    /// Associated connection ID
+    pub connection_id: i64,
+
+    /// Database name
+    pub database: String,
+
+    /// Display name for the saved query
+    pub name: String,
+
+    /// SQL query text
+    pub query_text: String,
+
+    /// Description
+    pub description: Option<String>,
+
+    /// Category for grouping
+    pub category: Option<String>,
+
+    /// Creation timestamp
+    pub created_at: Option<String>,
+
+    /// Last update timestamp
+    pub updated_at: Option<String>,
+}
+
+/// Create saved query request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateSavedQueryRequest {
+    pub connection_id: i64,
+    pub database: String,
+    pub name: String,
+    pub query_text: String,
+    pub description: Option<String>,
+    pub category: Option<String>,
+}
+
+/// Update saved query request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateSavedQueryRequest {
+    pub name: Option<String>,
+    pub query_text: Option<String>,
+    pub description: Option<String>,
+    pub category: Option<String>,
 }

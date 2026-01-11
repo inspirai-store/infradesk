@@ -8,7 +8,11 @@
 use sqlx::{sqlite::SqlitePoolOptions, Pool, Sqlite};
 use std::path::Path;
 
-use crate::db::models::{Cluster, Connection, PortForward};
+use crate::db::models::{
+    Cluster, Connection, PortForward,
+    QueryHistory, AddQueryHistoryRequest,
+    SavedQuery, CreateSavedQueryRequest, UpdateSavedQueryRequest,
+};
 use crate::error::{AppError, AppResult};
 
 /// SQLite connection pool wrapper
@@ -73,6 +77,24 @@ impl SqlitePool {
         .execute(&self.pool)
         .await?;
 
+        // Add forward_local_port column if not exists (migration for existing databases)
+        let _ = sqlx::query(
+            r#"
+            ALTER TABLE connections ADD COLUMN forward_local_port INTEGER DEFAULT 0
+            "#,
+        )
+        .execute(&self.pool)
+        .await;
+
+        // Add password column if not exists (migration for existing databases)
+        let _ = sqlx::query(
+            r#"
+            ALTER TABLE connections ADD COLUMN password TEXT
+            "#,
+        )
+        .execute(&self.pool)
+        .await;
+
         // Create clusters table
         sqlx::query(
             r#"
@@ -121,6 +143,81 @@ impl SqlitePool {
         .execute(&self.pool)
         .await?;
 
+        // Create query_history table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS query_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                connection_id INTEGER NOT NULL,
+                database TEXT NOT NULL,
+                query_type TEXT NOT NULL,
+                query_text TEXT NOT NULL,
+                executed_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                duration_ms INTEGER NOT NULL,
+                row_count INTEGER NOT NULL,
+                status TEXT NOT NULL,
+                error_message TEXT,
+                FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create indexes for query_history
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_query_history_connection ON query_history(connection_id)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_query_history_executed ON query_history(executed_at DESC)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create saved_queries table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS saved_queries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                connection_id INTEGER NOT NULL,
+                database TEXT NOT NULL,
+                name TEXT NOT NULL,
+                query_text TEXT NOT NULL,
+                description TEXT,
+                category TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create indexes for saved_queries
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_saved_queries_connection ON saved_queries(connection_id)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_saved_queries_category ON saved_queries(category)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
         Ok(())
     }
 
@@ -128,9 +225,9 @@ impl SqlitePool {
     pub async fn get_all_connections(&self) -> AppResult<Vec<Connection>> {
         let connections = sqlx::query_as::<_, Connection>(
             r#"
-            SELECT id, name, type, host, port, username, database_name,
+            SELECT id, name, type, host, port, username, password, database_name,
                    is_default, source, k8s_namespace, k8s_service_name,
-                   k8s_service_port, cluster_id, created_at, updated_at
+                   k8s_service_port, cluster_id, forward_local_port, created_at, updated_at
             FROM connections
             ORDER BY name
             "#,
@@ -145,9 +242,9 @@ impl SqlitePool {
     pub async fn get_connection(&self, id: i64) -> AppResult<Connection> {
         let connection = sqlx::query_as::<_, Connection>(
             r#"
-            SELECT id, name, type, host, port, username, database_name,
+            SELECT id, name, type, host, port, username, password, database_name,
                    is_default, source, k8s_namespace, k8s_service_name,
-                   k8s_service_port, cluster_id, created_at, updated_at
+                   k8s_service_port, cluster_id, forward_local_port, created_at, updated_at
             FROM connections
             WHERE id = ?
             "#,
@@ -163,9 +260,9 @@ impl SqlitePool {
     pub async fn get_connections_by_type(&self, conn_type: &str) -> AppResult<Vec<Connection>> {
         let connections = sqlx::query_as::<_, Connection>(
             r#"
-            SELECT id, name, type, host, port, username, database_name,
+            SELECT id, name, type, host, port, username, password, database_name,
                    is_default, source, k8s_namespace, k8s_service_name,
-                   k8s_service_port, cluster_id, created_at, updated_at
+                   k8s_service_port, cluster_id, forward_local_port, created_at, updated_at
             FROM connections
             WHERE type = ?
             ORDER BY name
@@ -182,10 +279,10 @@ impl SqlitePool {
     pub async fn create_connection(&self, conn: &Connection) -> AppResult<Connection> {
         let result = sqlx::query(
             r#"
-            INSERT INTO connections (name, type, host, port, username, database_name,
+            INSERT INTO connections (name, type, host, port, username, password, database_name,
                                     is_default, source, k8s_namespace, k8s_service_name,
-                                    k8s_service_port, cluster_id)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                    k8s_service_port, cluster_id, forward_local_port)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             "#,
         )
         .bind(&conn.name)
@@ -193,6 +290,7 @@ impl SqlitePool {
         .bind(&conn.host)
         .bind(conn.port)
         .bind(&conn.username)
+        .bind(&conn.password)
         .bind(&conn.database_name)
         .bind(conn.is_default)
         .bind(&conn.source)
@@ -200,6 +298,7 @@ impl SqlitePool {
         .bind(&conn.k8s_service_name)
         .bind(conn.k8s_service_port)
         .bind(conn.cluster_id)
+        .bind(conn.forward_local_port.unwrap_or(0))
         .execute(&self.pool)
         .await?;
 
@@ -212,10 +311,10 @@ impl SqlitePool {
         sqlx::query(
             r#"
             UPDATE connections
-            SET name = ?, type = ?, host = ?, port = ?, username = ?,
+            SET name = ?, type = ?, host = ?, port = ?, username = ?, password = ?,
                 database_name = ?, is_default = ?, source = ?,
                 k8s_namespace = ?, k8s_service_name = ?, k8s_service_port = ?,
-                cluster_id = ?, updated_at = CURRENT_TIMESTAMP
+                cluster_id = ?, forward_local_port = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ?
             "#,
         )
@@ -224,6 +323,7 @@ impl SqlitePool {
         .bind(&conn.host)
         .bind(conn.port)
         .bind(&conn.username)
+        .bind(&conn.password)
         .bind(&conn.database_name)
         .bind(conn.is_default)
         .bind(&conn.source)
@@ -231,6 +331,7 @@ impl SqlitePool {
         .bind(&conn.k8s_service_name)
         .bind(conn.k8s_service_port)
         .bind(conn.cluster_id)
+        .bind(conn.forward_local_port.unwrap_or(0))
         .bind(id)
         .execute(&self.pool)
         .await?;
@@ -256,9 +357,9 @@ impl SqlitePool {
     pub async fn get_connections_by_cluster(&self, cluster_id: i64) -> AppResult<Vec<Connection>> {
         let connections = sqlx::query_as::<_, Connection>(
             r#"
-            SELECT id, name, type, host, port, username, database_name,
+            SELECT id, name, type, host, port, username, password, database_name,
                    is_default, source, k8s_namespace, k8s_service_name,
-                   k8s_service_port, cluster_id, created_at, updated_at
+                   k8s_service_port, cluster_id, forward_local_port, created_at, updated_at
             FROM connections
             WHERE cluster_id = ?
             ORDER BY name
@@ -494,6 +595,269 @@ impl SqlitePool {
     /// Delete a port forward
     pub async fn delete_port_forward(&self, id: &str) -> AppResult<()> {
         sqlx::query("DELETE FROM port_forwards WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    // ==================== Query History Operations ====================
+
+    /// Get query history with optional filters
+    pub async fn get_query_history(
+        &self,
+        conn_type: Option<&str>,
+        database: Option<&str>,
+        status: Option<&str>,
+        keyword: Option<&str>,
+        limit: i64,
+        offset: i64,
+    ) -> AppResult<(Vec<QueryHistory>, i64)> {
+        // Build WHERE clause based on filters
+        let mut conditions = vec![];
+        let mut params: Vec<String> = vec![];
+
+        if let Some(t) = conn_type {
+            conditions.push("c.type = ?".to_string());
+            params.push(t.to_string());
+        }
+        if let Some(db) = database {
+            conditions.push("h.database = ?".to_string());
+            params.push(db.to_string());
+        }
+        if let Some(s) = status {
+            conditions.push("h.status = ?".to_string());
+            params.push(s.to_string());
+        }
+        if let Some(kw) = keyword {
+            conditions.push("h.query_text LIKE ?".to_string());
+            params.push(format!("%{}%", kw));
+        }
+
+        let where_clause = if conditions.is_empty() {
+            String::new()
+        } else {
+            format!("WHERE {}", conditions.join(" AND "))
+        };
+
+        // Get total count
+        let count_query = format!(
+            r#"
+            SELECT COUNT(*) as count
+            FROM query_history h
+            JOIN connections c ON h.connection_id = c.id
+            {}
+            "#,
+            where_clause
+        );
+
+        let mut count_builder = sqlx::query_scalar::<_, i64>(&count_query);
+        for param in &params {
+            count_builder = count_builder.bind(param);
+        }
+        let total = count_builder.fetch_one(&self.pool).await?;
+
+        // Get history entries
+        let select_query = format!(
+            r#"
+            SELECT h.id, h.connection_id, h.database, h.query_type, h.query_text,
+                   h.executed_at, h.duration_ms, h.row_count, h.status, h.error_message
+            FROM query_history h
+            JOIN connections c ON h.connection_id = c.id
+            {}
+            ORDER BY h.executed_at DESC
+            LIMIT ? OFFSET ?
+            "#,
+            where_clause
+        );
+
+        let mut builder = sqlx::query_as::<_, QueryHistory>(&select_query);
+        for param in &params {
+            builder = builder.bind(param);
+        }
+        builder = builder.bind(limit).bind(offset);
+
+        let history = builder.fetch_all(&self.pool).await?;
+
+        Ok((history, total))
+    }
+
+    /// Add a query history entry
+    pub async fn add_query_history(&self, history: &AddQueryHistoryRequest) -> AppResult<QueryHistory> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO query_history (connection_id, database, query_type, query_text, duration_ms, row_count, status, error_message)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(history.connection_id)
+        .bind(&history.database)
+        .bind(&history.query_type)
+        .bind(&history.query_text)
+        .bind(history.duration_ms)
+        .bind(history.row_count)
+        .bind(&history.status)
+        .bind(&history.error_message)
+        .execute(&self.pool)
+        .await?;
+
+        let id = result.last_insert_rowid();
+
+        let created = sqlx::query_as::<_, QueryHistory>(
+            r#"
+            SELECT id, connection_id, database, query_type, query_text,
+                   executed_at, duration_ms, row_count, status, error_message
+            FROM query_history WHERE id = ?
+            "#,
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(created)
+    }
+
+    /// Delete a query history entry
+    pub async fn delete_query_history(&self, id: i64) -> AppResult<()> {
+        sqlx::query("DELETE FROM query_history WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    /// Cleanup old query history entries
+    pub async fn cleanup_query_history(&self, days: i64) -> AppResult<i64> {
+        let result = sqlx::query(
+            r#"
+            DELETE FROM query_history
+            WHERE executed_at < datetime('now', '-' || ? || ' days')
+            "#,
+        )
+        .bind(days)
+        .execute(&self.pool)
+        .await?;
+
+        Ok(result.rows_affected() as i64)
+    }
+
+    // ==================== Saved Query Operations ====================
+
+    /// Get saved queries with optional category filter
+    pub async fn get_saved_queries(&self, category: Option<&str>) -> AppResult<Vec<SavedQuery>> {
+        let queries = if let Some(cat) = category {
+            sqlx::query_as::<_, SavedQuery>(
+                r#"
+                SELECT id, connection_id, database, name, query_text, description, category, created_at, updated_at
+                FROM saved_queries
+                WHERE category = ?
+                ORDER BY name
+                "#,
+            )
+            .bind(cat)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, SavedQuery>(
+                r#"
+                SELECT id, connection_id, database, name, query_text, description, category, created_at, updated_at
+                FROM saved_queries
+                ORDER BY category, name
+                "#,
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        Ok(queries)
+    }
+
+    /// Get a saved query by ID
+    pub async fn get_saved_query(&self, id: i64) -> AppResult<SavedQuery> {
+        let query = sqlx::query_as::<_, SavedQuery>(
+            r#"
+            SELECT id, connection_id, database, name, query_text, description, category, created_at, updated_at
+            FROM saved_queries WHERE id = ?
+            "#,
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(query)
+    }
+
+    /// Create a saved query
+    pub async fn create_saved_query(&self, query: &CreateSavedQueryRequest) -> AppResult<SavedQuery> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO saved_queries (connection_id, database, name, query_text, description, category)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(query.connection_id)
+        .bind(&query.database)
+        .bind(&query.name)
+        .bind(&query.query_text)
+        .bind(&query.description)
+        .bind(&query.category)
+        .execute(&self.pool)
+        .await?;
+
+        let id = result.last_insert_rowid();
+        self.get_saved_query(id).await
+    }
+
+    /// Update a saved query
+    pub async fn update_saved_query(&self, id: i64, update: &UpdateSavedQueryRequest) -> AppResult<SavedQuery> {
+        // Build UPDATE query dynamically based on provided fields
+        let mut updates = vec![];
+        let mut params: Vec<String> = vec![];
+
+        if let Some(name) = &update.name {
+            updates.push("name = ?");
+            params.push(name.clone());
+        }
+        if let Some(query_text) = &update.query_text {
+            updates.push("query_text = ?");
+            params.push(query_text.clone());
+        }
+        if let Some(description) = &update.description {
+            updates.push("description = ?");
+            params.push(description.clone());
+        }
+        if let Some(category) = &update.category {
+            updates.push("category = ?");
+            params.push(category.clone());
+        }
+
+        if updates.is_empty() {
+            return self.get_saved_query(id).await;
+        }
+
+        updates.push("updated_at = CURRENT_TIMESTAMP");
+
+        let query_str = format!(
+            "UPDATE saved_queries SET {} WHERE id = ?",
+            updates.join(", ")
+        );
+
+        let mut builder = sqlx::query(&query_str);
+        for param in &params {
+            builder = builder.bind(param);
+        }
+        builder = builder.bind(id);
+
+        builder.execute(&self.pool).await?;
+
+        self.get_saved_query(id).await
+    }
+
+    /// Delete a saved query
+    pub async fn delete_saved_query(&self, id: i64) -> AppResult<()> {
+        sqlx::query("DELETE FROM saved_queries WHERE id = ?")
             .bind(id)
             .execute(&self.pool)
             .await?;
