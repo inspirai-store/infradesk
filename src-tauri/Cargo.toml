@@ -7,7 +7,6 @@ license = "MIT"
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"
-default-run = "zeni-x"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -62,14 +61,6 @@ base64 = "0.22"
 
 # URL encoding for connection strings
 urlencoding = "2"
-
-# HTTP server (for standalone web mode)
-axum = "0.7"
-tower-http = { version = "0.5", features = ["cors"] }
-
-[[bin]]
-name = "zeni-x-server"
-path = "src/bin/server.rs"
 
 [dev-dependencies]
 # Testing
