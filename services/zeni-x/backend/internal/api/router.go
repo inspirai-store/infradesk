@@ -317,6 +317,16 @@ func NewRouter(cfg *config.Config, db *store.SQLite) *gin.Engine {
 			k8sGroup.POST("/clusters", k8sHandler.ListClusters)
 			// 批量导入服务为连接配置
 			k8sGroup.POST("/import", k8sHandler.ImportConnections)
+
+			// K8s 资源查看 API
+			k8sGroup.GET("/clusters/:id/namespaces", k8sHandler.ListNamespaces)
+			k8sGroup.GET("/clusters/:id/namespaces/:namespace/deployments", k8sHandler.ListDeployments)
+			k8sGroup.GET("/clusters/:id/namespaces/:namespace/pods", k8sHandler.ListPods)
+			k8sGroup.GET("/clusters/:id/namespaces/:namespace/configmaps", k8sHandler.ListConfigMaps)
+			k8sGroup.GET("/clusters/:id/namespaces/:namespace/configmaps/:name", k8sHandler.GetConfigMapData)
+			k8sGroup.GET("/clusters/:id/namespaces/:namespace/secrets", k8sHandler.ListSecrets)
+			k8sGroup.GET("/clusters/:id/namespaces/:namespace/services", k8sHandler.ListServices)
+			k8sGroup.GET("/clusters/:id/namespaces/:namespace/ingresses", k8sHandler.ListIngresses)
 		}
 
 		// ==================== 端口转发 API ====================

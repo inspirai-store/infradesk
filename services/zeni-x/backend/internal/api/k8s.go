@@ -4,8 +4,11 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/zeni-x/backend/internal/k8s"
 	"github.com/zeni-x/backend/internal/service"
 	"github.com/zeni-x/backend/internal/store"
 )
@@ -343,5 +346,470 @@ func (h *K8sHandler) ImportConnections(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, response)
+}
+
+// ==================== K8s Resource Response Types ====================
+
+// K8sDeployment Deployment 信息
+type K8sDeployment struct {
+	Name              string            `json:"name"`
+	Namespace         string            `json:"namespace"`
+	Replicas          int32             `json:"replicas"`
+	ReadyReplicas     int32             `json:"ready_replicas"`
+	AvailableReplicas int32             `json:"available_replicas"`
+	Labels            map[string]string `json:"labels"`
+	CreatedAt         *string           `json:"created_at"`
+}
+
+// K8sPod Pod 信息
+type K8sPod struct {
+	Name      string  `json:"name"`
+	Namespace string  `json:"namespace"`
+	Status    string  `json:"status"`
+	Ready     string  `json:"ready"`
+	Restarts  int32   `json:"restarts"`
+	Node      *string `json:"node"`
+	IP        *string `json:"ip"`
+	CreatedAt *string `json:"created_at"`
+}
+
+// K8sConfigMapInfo ConfigMap 信息
+type K8sConfigMapInfo struct {
+	Name      string   `json:"name"`
+	Namespace string   `json:"namespace"`
+	DataKeys  []string `json:"data_keys"`
+	CreatedAt *string  `json:"created_at"`
+}
+
+// K8sSecretInfo Secret 信息
+type K8sSecretInfo struct {
+	Name       string   `json:"name"`
+	Namespace  string   `json:"namespace"`
+	SecretType string   `json:"secret_type"`
+	DataKeys   []string `json:"data_keys"`
+	CreatedAt  *string  `json:"created_at"`
+}
+
+// K8sServiceInfo Service 信息
+type K8sServiceInfo struct {
+	Name        string   `json:"name"`
+	Namespace   string   `json:"namespace"`
+	ServiceType string   `json:"service_type"`
+	ClusterIP   *string  `json:"cluster_ip"`
+	ExternalIP  *string  `json:"external_ip"`
+	Ports       []string `json:"ports"`
+	CreatedAt   *string  `json:"created_at"`
+}
+
+// K8sIngressInfo Ingress 信息
+type K8sIngressInfo struct {
+	Name      string   `json:"name"`
+	Namespace string   `json:"namespace"`
+	Hosts     []string `json:"hosts"`
+	Address   *string  `json:"address"`
+	CreatedAt *string  `json:"created_at"`
+}
+
+// getK8sClient 根据集群 ID 获取 K8s 客户端
+func (h *K8sHandler) getK8sClient(clusterID int64) (*k8s.Client, error) {
+	cluster, err := h.db.GetClusterByID(clusterID)
+	if err != nil {
+		return nil, fmt.Errorf("cluster not found: %w", err)
+	}
+
+	// 从集群配置创建客户端
+	client, err := k8s.NewClientWithConfig(cluster.Kubeconfig, cluster.Context)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create k8s client: %w", err)
+	}
+
+	return client, nil
+}
+
+// ListNamespaces 列出集群的所有命名空间
+// @Router /api/k8s/clusters/:id/namespaces [get]
+func (h *K8sHandler) ListNamespaces(c *gin.Context) {
+	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
+		return
+	}
+
+	client, err := h.getK8sClient(clusterID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	namespaces, err := client.ListAllNamespaces(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, namespaces)
+}
+
+// ListDeployments 列出命名空间的 Deployments
+// @Router /api/k8s/clusters/:id/namespaces/:namespace/deployments [get]
+func (h *K8sHandler) ListDeployments(c *gin.Context) {
+	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
+		return
+	}
+	namespace := c.Param("namespace")
+
+	client, err := h.getK8sClient(clusterID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	deployments, err := client.ListDeployments(c.Request.Context(), namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := make([]K8sDeployment, 0, len(deployments))
+	for _, d := range deployments {
+		var createdAt *string
+		if !d.CreationTimestamp.IsZero() {
+			t := d.CreationTimestamp.Format(time.RFC3339)
+			createdAt = &t
+		}
+
+		var replicas, readyReplicas, availableReplicas int32
+		if d.Spec.Replicas != nil {
+			replicas = *d.Spec.Replicas
+		}
+		readyReplicas = d.Status.ReadyReplicas
+		availableReplicas = d.Status.AvailableReplicas
+
+		result = append(result, K8sDeployment{
+			Name:              d.Name,
+			Namespace:         d.Namespace,
+			Replicas:          replicas,
+			ReadyReplicas:     readyReplicas,
+			AvailableReplicas: availableReplicas,
+			Labels:            d.Labels,
+			CreatedAt:         createdAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// ListPods 列出命名空间的 Pods
+// @Router /api/k8s/clusters/:id/namespaces/:namespace/pods [get]
+func (h *K8sHandler) ListPods(c *gin.Context) {
+	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
+		return
+	}
+	namespace := c.Param("namespace")
+
+	client, err := h.getK8sClient(clusterID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	pods, err := client.ListPods(c.Request.Context(), namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := make([]K8sPod, 0, len(pods))
+	for _, p := range pods {
+		var createdAt *string
+		if !p.CreationTimestamp.IsZero() {
+			t := p.CreationTimestamp.Format(time.RFC3339)
+			createdAt = &t
+		}
+
+		// Calculate ready containers
+		var readyContainers, totalContainers int
+		var restarts int32
+		for _, cs := range p.Status.ContainerStatuses {
+			totalContainers++
+			if cs.Ready {
+				readyContainers++
+			}
+			restarts += cs.RestartCount
+		}
+		ready := fmt.Sprintf("%d/%d", readyContainers, totalContainers)
+
+		var node, ip *string
+		if p.Spec.NodeName != "" {
+			node = &p.Spec.NodeName
+		}
+		if p.Status.PodIP != "" {
+			ip = &p.Status.PodIP
+		}
+
+		result = append(result, K8sPod{
+			Name:      p.Name,
+			Namespace: p.Namespace,
+			Status:    string(p.Status.Phase),
+			Ready:     ready,
+			Restarts:  restarts,
+			Node:      node,
+			IP:        ip,
+			CreatedAt: createdAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// ListConfigMaps 列出命名空间的 ConfigMaps
+// @Router /api/k8s/clusters/:id/namespaces/:namespace/configmaps [get]
+func (h *K8sHandler) ListConfigMaps(c *gin.Context) {
+	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
+		return
+	}
+	namespace := c.Param("namespace")
+
+	client, err := h.getK8sClient(clusterID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	configmaps, err := client.ListConfigMaps(c.Request.Context(), namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := make([]K8sConfigMapInfo, 0, len(configmaps))
+	for _, cm := range configmaps {
+		var createdAt *string
+		if !cm.CreationTimestamp.IsZero() {
+			t := cm.CreationTimestamp.Format(time.RFC3339)
+			createdAt = &t
+		}
+
+		keys := make([]string, 0, len(cm.Data))
+		for k := range cm.Data {
+			keys = append(keys, k)
+		}
+
+		result = append(result, K8sConfigMapInfo{
+			Name:      cm.Name,
+			Namespace: cm.Namespace,
+			DataKeys:  keys,
+			CreatedAt: createdAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// GetConfigMapData 获取 ConfigMap 数据
+// @Router /api/k8s/clusters/:id/namespaces/:namespace/configmaps/:name [get]
+func (h *K8sHandler) GetConfigMapData(c *gin.Context) {
+	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
+		return
+	}
+	namespace := c.Param("namespace")
+	name := c.Param("name")
+
+	client, err := h.getK8sClient(clusterID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	cm, err := client.GetConfigMap(c.Request.Context(), namespace, name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, cm.Data)
+}
+
+// ListSecrets 列出命名空间的 Secrets
+// @Router /api/k8s/clusters/:id/namespaces/:namespace/secrets [get]
+func (h *K8sHandler) ListSecrets(c *gin.Context) {
+	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
+		return
+	}
+	namespace := c.Param("namespace")
+
+	client, err := h.getK8sClient(clusterID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	secrets, err := client.ListSecrets(c.Request.Context(), namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := make([]K8sSecretInfo, 0, len(secrets))
+	for _, s := range secrets {
+		var createdAt *string
+		if !s.CreationTimestamp.IsZero() {
+			t := s.CreationTimestamp.Format(time.RFC3339)
+			createdAt = &t
+		}
+
+		keys := make([]string, 0, len(s.Data))
+		for k := range s.Data {
+			keys = append(keys, k)
+		}
+
+		result = append(result, K8sSecretInfo{
+			Name:       s.Name,
+			Namespace:  s.Namespace,
+			SecretType: string(s.Type),
+			DataKeys:   keys,
+			CreatedAt:  createdAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// ListServices 列出命名空间的 Services
+// @Router /api/k8s/clusters/:id/namespaces/:namespace/services [get]
+func (h *K8sHandler) ListServices(c *gin.Context) {
+	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
+		return
+	}
+	namespace := c.Param("namespace")
+
+	client, err := h.getK8sClient(clusterID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	services, err := client.ListServices(c.Request.Context(), namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := make([]K8sServiceInfo, 0, len(services))
+	for _, svc := range services {
+		var createdAt *string
+		if !svc.CreationTimestamp.IsZero() {
+			t := svc.CreationTimestamp.Format(time.RFC3339)
+			createdAt = &t
+		}
+
+		var clusterIP, externalIP *string
+		if svc.Spec.ClusterIP != "" && svc.Spec.ClusterIP != "None" {
+			clusterIP = &svc.Spec.ClusterIP
+		}
+		if len(svc.Status.LoadBalancer.Ingress) > 0 {
+			ip := svc.Status.LoadBalancer.Ingress[0].IP
+			if ip == "" {
+				ip = svc.Status.LoadBalancer.Ingress[0].Hostname
+			}
+			if ip != "" {
+				externalIP = &ip
+			}
+		}
+
+		ports := make([]string, 0, len(svc.Spec.Ports))
+		for _, p := range svc.Spec.Ports {
+			portStr := fmt.Sprintf("%d", p.Port)
+			if p.NodePort > 0 {
+				portStr = fmt.Sprintf("%d:%d", p.Port, p.NodePort)
+			}
+			portStr = fmt.Sprintf("%s/%s", portStr, p.Protocol)
+			ports = append(ports, portStr)
+		}
+
+		result = append(result, K8sServiceInfo{
+			Name:        svc.Name,
+			Namespace:   svc.Namespace,
+			ServiceType: string(svc.Spec.Type),
+			ClusterIP:   clusterIP,
+			ExternalIP:  externalIP,
+			Ports:       ports,
+			CreatedAt:   createdAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, result)
+}
+
+// ListIngresses 列出命名空间的 Ingresses
+// @Router /api/k8s/clusters/:id/namespaces/:namespace/ingresses [get]
+func (h *K8sHandler) ListIngresses(c *gin.Context) {
+	clusterID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid cluster id"})
+		return
+	}
+	namespace := c.Param("namespace")
+
+	client, err := h.getK8sClient(clusterID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	ingresses, err := client.ListIngresses(c.Request.Context(), namespace)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	result := make([]K8sIngressInfo, 0, len(ingresses))
+	for _, ing := range ingresses {
+		var createdAt *string
+		if !ing.CreationTimestamp.IsZero() {
+			t := ing.CreationTimestamp.Format(time.RFC3339)
+			createdAt = &t
+		}
+
+		hosts := make([]string, 0)
+		for _, rule := range ing.Spec.Rules {
+			if rule.Host != "" {
+				hosts = append(hosts, rule.Host)
+			}
+		}
+
+		var address *string
+		if len(ing.Status.LoadBalancer.Ingress) > 0 {
+			addr := ing.Status.LoadBalancer.Ingress[0].IP
+			if addr == "" {
+				addr = ing.Status.LoadBalancer.Ingress[0].Hostname
+			}
+			if addr != "" {
+				address = &addr
+			}
+		}
+
+		result = append(result, K8sIngressInfo{
+			Name:      ing.Name,
+			Namespace: ing.Namespace,
+			Hosts:     hosts,
+			Address:   address,
+			CreatedAt: createdAt,
+		})
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 

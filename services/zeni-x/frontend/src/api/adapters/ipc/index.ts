@@ -17,6 +17,12 @@ import type {
   IK8sApi,
   IPortForwardApi,
   ApiError,
+  K8sDeployment,
+  K8sPod,
+  K8sConfigMapInfo,
+  K8sSecretInfo,
+  K8sServiceInfo,
+  K8sIngressInfo,
 } from '../../types'
 import type {
   Connection,
@@ -591,6 +597,71 @@ class IpcK8sApi implements IK8sApi {
           cluster_name: clusterName,
         }
       })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  // K8s resource listing methods
+  async listNamespaces(clusterId: number): Promise<string[]> {
+    try {
+      return await invoke<string[]>('k8s_list_namespaces', { clusterId })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async listDeployments(clusterId: number, namespace: string): Promise<K8sDeployment[]> {
+    try {
+      return await invoke<K8sDeployment[]>('k8s_list_deployments', { clusterId, namespace })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async listPods(clusterId: number, namespace: string): Promise<K8sPod[]> {
+    try {
+      return await invoke<K8sPod[]>('k8s_list_pods', { clusterId, namespace })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async listConfigMaps(clusterId: number, namespace: string): Promise<K8sConfigMapInfo[]> {
+    try {
+      return await invoke<K8sConfigMapInfo[]>('k8s_list_configmaps', { clusterId, namespace })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async getConfigMapData(clusterId: number, namespace: string, name: string): Promise<Record<string, string>> {
+    try {
+      return await invoke<Record<string, string>>('k8s_get_configmap_data', { clusterId, namespace, name })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async listSecrets(clusterId: number, namespace: string): Promise<K8sSecretInfo[]> {
+    try {
+      return await invoke<K8sSecretInfo[]>('k8s_list_secrets', { clusterId, namespace })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async listServices(clusterId: number, namespace: string): Promise<K8sServiceInfo[]> {
+    try {
+      return await invoke<K8sServiceInfo[]>('k8s_list_services', { clusterId, namespace })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async listIngresses(clusterId: number, namespace: string): Promise<K8sIngressInfo[]> {
+    try {
+      return await invoke<K8sIngressInfo[]>('k8s_list_ingresses', { clusterId, namespace })
     } catch (error) {
       handleInvokeError(error)
     }

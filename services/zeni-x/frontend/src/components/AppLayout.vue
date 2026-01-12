@@ -10,12 +10,13 @@ import {
   NSpace,
   NDivider,
 } from 'naive-ui'
-import { 
-  ServerOutline, 
-  KeyOutline, 
+import {
+  ServerOutline,
+  KeyOutline,
   HomeOutline,
   TerminalOutline,
   LinkOutline,
+  CloudOutline,
 } from '@vicons/ionicons5'
 import type { MenuOption } from 'naive-ui'
 import { h } from 'vue'
@@ -28,6 +29,7 @@ const activeKey = computed(() => {
   if (path.startsWith('/connections')) return 'connections'
   if (path.startsWith('/mysql')) return 'mysql'
   if (path.startsWith('/redis')) return 'redis'
+  if (path.startsWith('/k8s')) return 'k8s'
   return 'home'
 })
 
@@ -57,6 +59,11 @@ const menuOptions: MenuOption[] = [
     icon: () => h(NIcon, null, { default: () => h(KeyOutline) }),
   },
   {
+    label: 'K8s 资源',
+    key: 'k8s',
+    icon: () => h(NIcon, null, { default: () => h(CloudOutline) }),
+  },
+  {
     type: 'divider',
     key: 'd2',
   },
@@ -80,6 +87,9 @@ function handleMenuSelect(key: string) {
       break
     case 'redis':
       router.push('/redis')
+      break
+    case 'k8s':
+      router.push('/k8s-resources')
       break
     case 'query':
       router.push('/mysql/query')

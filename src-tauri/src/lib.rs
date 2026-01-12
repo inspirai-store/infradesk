@@ -83,6 +83,15 @@ pub fn run() {
             commands::k8s_discover,
             commands::k8s_list_clusters,
             commands::k8s_import_connections,
+            // K8s resource listing
+            commands::k8s_list_namespaces,
+            commands::k8s_list_deployments,
+            commands::k8s_list_pods,
+            commands::k8s_list_configmaps,
+            commands::k8s_get_configmap_data,
+            commands::k8s_list_secrets,
+            commands::k8s_list_services,
+            commands::k8s_list_ingresses,
             // MySQL operations
             commands::mysql_get_info,
             commands::mysql_list_databases,

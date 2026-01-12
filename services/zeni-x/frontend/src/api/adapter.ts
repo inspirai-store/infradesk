@@ -85,3 +85,9 @@ export function resetApiAdapter(): void {
 export function isModuleUsingIpc(module: keyof typeof ipcEnabledModules): boolean {
   return isTauri() && ipcEnabledModules[module]
 }
+
+/**
+ * Convenience export for direct API access
+ * Usage: import { api } from '@/api/adapter'
+ */
+export const api = getApiAdapter()

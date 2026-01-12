@@ -66,6 +66,11 @@ const routes: RouteRecordRaw[] = [
       },
     ],
   },
+  {
+    path: '/k8s-resources',
+    name: 'K8sResources',
+    component: () => import('@/views/k8s/K8sResourcesView.vue'),
+  },
 ]
 
 const router = createRouter({

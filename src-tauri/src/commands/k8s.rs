@@ -4,9 +4,12 @@
 
 use tauri::State;
 
+use std::collections::HashMap;
+
 use crate::db::models::{
     Cluster, Connection, DiscoveredService, ImportConnectionsRequest, ImportConnectionsResponse,
-    ImportConnectionResult, ListClustersResponse,
+    ImportConnectionResult, K8sConfigMapInfo, K8sDeployment, K8sIngressInfo, K8sPod,
+    K8sSecretInfo, K8sServiceInfo, ListClustersResponse,
 };
 use crate::db::SqlitePool;
 use crate::error::AppError;
@@ -215,4 +218,106 @@ pub async fn k8s_import_connections(
     }
 
     Ok(response)
+}
+
+// ==================== K8s Resource Commands ====================
+
+/// Helper to get K8sService from cluster_id
+async fn get_k8s_service(pool: &SqlitePool, cluster_id: i64) -> Result<K8sService, AppError> {
+    let cluster_service = ClusterService::new(pool.clone());
+    let cluster = cluster_service.get_by_id(cluster_id).await?;
+
+    let kubeconfig = cluster.kubeconfig.ok_or_else(|| {
+        AppError::K8s("Cluster has no kubeconfig".to_string())
+    })?;
+
+    K8sService::from_kubeconfig(&kubeconfig, cluster.context.as_deref()).await
+}
+
+/// List all namespaces in a cluster
+#[tauri::command]
+pub async fn k8s_list_namespaces(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+) -> Result<Vec<String>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.get_namespaces().await
+}
+
+/// List deployments in a namespace
+#[tauri::command]
+pub async fn k8s_list_deployments(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+) -> Result<Vec<K8sDeployment>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_deployments(&namespace).await
+}
+
+/// List pods in a namespace
+#[tauri::command]
+pub async fn k8s_list_pods(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+) -> Result<Vec<K8sPod>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_pods(&namespace).await
+}
+
+/// List ConfigMaps in a namespace
+#[tauri::command]
+pub async fn k8s_list_configmaps(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+) -> Result<Vec<K8sConfigMapInfo>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_configmaps(&namespace).await
+}
+
+/// Get ConfigMap data
+#[tauri::command]
+pub async fn k8s_get_configmap_data(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+    name: String,
+) -> Result<HashMap<String, String>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.get_configmap_data(&namespace, &name).await
+}
+
+/// List Secrets in a namespace (metadata only)
+#[tauri::command]
+pub async fn k8s_list_secrets(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+) -> Result<Vec<K8sSecretInfo>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_secrets(&namespace).await
+}
+
+/// List Services in a namespace
+#[tauri::command]
+pub async fn k8s_list_services(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+) -> Result<Vec<K8sServiceInfo>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_services_info(&namespace).await
+}
+
+/// List Ingresses in a namespace
+#[tauri::command]
+pub async fn k8s_list_ingresses(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+) -> Result<Vec<K8sIngressInfo>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_ingresses(&namespace).await
 }

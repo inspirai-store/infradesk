@@ -7,7 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -245,5 +247,70 @@ func (c *Client) FindSecretForService(ctx context.Context, service *corev1.Servi
 	}
 
 	return nil, fmt.Errorf("no secret found for service %s", serviceName)
+}
+
+// ListAllNamespaces 列出所有命名空间（包括系统命名空间）
+func (c *Client) ListAllNamespaces(ctx context.Context) ([]string, error) {
+	namespaces, err := c.clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list namespaces: %w", err)
+	}
+
+	var result []string
+	for _, ns := range namespaces.Items {
+		result = append(result, ns.Name)
+	}
+
+	return result, nil
+}
+
+// ListDeployments 列出指定命名空间的所有 Deployments
+func (c *Client) ListDeployments(ctx context.Context, namespace string) ([]appsv1.Deployment, error) {
+	deployments, err := c.clientset.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list deployments in namespace %s: %w", namespace, err)
+	}
+
+	return deployments.Items, nil
+}
+
+// ListPods 列出指定命名空间的所有 Pods
+func (c *Client) ListPods(ctx context.Context, namespace string) ([]corev1.Pod, error) {
+	pods, err := c.clientset.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list pods in namespace %s: %w", namespace, err)
+	}
+
+	return pods.Items, nil
+}
+
+// ListConfigMaps 列出指定命名空间的所有 ConfigMaps
+func (c *Client) ListConfigMaps(ctx context.Context, namespace string) ([]corev1.ConfigMap, error) {
+	configmaps, err := c.clientset.CoreV1().ConfigMaps(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list configmaps in namespace %s: %w", namespace, err)
+	}
+
+	return configmaps.Items, nil
+}
+
+// GetConfigMap 获取指定 ConfigMap
+func (c *Client) GetConfigMap(ctx context.Context, namespace, name string) (*corev1.ConfigMap, error) {
+	cm, err := c.clientset.CoreV1().ConfigMaps(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get configmap %s/%s: %w", namespace, name, err)
+	}
+
+	return cm, nil
+}
+
+// ListIngresses 列出指定命名空间的所有 Ingresses
+func (c *Client) ListIngresses(ctx context.Context, namespace string) ([]networkingv1.Ingress, error) {
+	ingresses, err := c.clientset.NetworkingV1().Ingresses(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list ingresses in namespace %s: %w", namespace, err)
+	}
+
+	return ingresses.Items, nil
 }
 

@@ -606,3 +606,71 @@ pub struct UpdateSavedQueryRequest {
     pub description: Option<String>,
     pub category: Option<String>,
 }
+
+// ==================== K8s Resource Models ====================
+
+/// K8s Deployment info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sDeployment {
+    pub name: String,
+    pub namespace: String,
+    pub replicas: i32,
+    pub ready_replicas: i32,
+    pub available_replicas: i32,
+    pub labels: std::collections::HashMap<String, String>,
+    pub created_at: Option<String>,
+}
+
+/// K8s Pod info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sPod {
+    pub name: String,
+    pub namespace: String,
+    pub status: String,
+    pub ready: String,
+    pub restarts: i32,
+    pub node: Option<String>,
+    pub ip: Option<String>,
+    pub created_at: Option<String>,
+}
+
+/// K8s ConfigMap info (metadata only)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sConfigMapInfo {
+    pub name: String,
+    pub namespace: String,
+    pub data_keys: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+/// K8s Secret info (metadata only, no values exposed)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sSecretInfo {
+    pub name: String,
+    pub namespace: String,
+    pub secret_type: String,
+    pub data_keys: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+/// K8s Service info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sServiceInfo {
+    pub name: String,
+    pub namespace: String,
+    pub service_type: String,
+    pub cluster_ip: Option<String>,
+    pub external_ip: Option<String>,
+    pub ports: Vec<String>,
+    pub created_at: Option<String>,
+}
+
+/// K8s Ingress info
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sIngressInfo {
+    pub name: String,
+    pub namespace: String,
+    pub hosts: Vec<String>,
+    pub address: Option<String>,
+    pub created_at: Option<String>,
+}

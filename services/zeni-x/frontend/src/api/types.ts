@@ -250,6 +250,80 @@ export interface ISavedQueryApi {
   deleteSavedQuery(id: number): Promise<void>
 }
 
+// ==================== K8s Resource Types ====================
+
+/**
+ * K8s Deployment info
+ */
+export interface K8sDeployment {
+  name: string
+  namespace: string
+  replicas: number
+  ready_replicas: number
+  available_replicas: number
+  labels: Record<string, string>
+  created_at?: string
+}
+
+/**
+ * K8s Pod info
+ */
+export interface K8sPod {
+  name: string
+  namespace: string
+  status: string
+  ready: string
+  restarts: number
+  node?: string
+  ip?: string
+  created_at?: string
+}
+
+/**
+ * K8s ConfigMap info (metadata only)
+ */
+export interface K8sConfigMapInfo {
+  name: string
+  namespace: string
+  data_keys: string[]
+  created_at?: string
+}
+
+/**
+ * K8s Secret info (metadata only)
+ */
+export interface K8sSecretInfo {
+  name: string
+  namespace: string
+  secret_type: string
+  data_keys: string[]
+  created_at?: string
+}
+
+/**
+ * K8s Service info
+ */
+export interface K8sServiceInfo {
+  name: string
+  namespace: string
+  service_type: string
+  cluster_ip?: string
+  external_ip?: string
+  ports: string[]
+  created_at?: string
+}
+
+/**
+ * K8s Ingress info
+ */
+export interface K8sIngressInfo {
+  name: string
+  namespace: string
+  hosts: string[]
+  address?: string
+  created_at?: string
+}
+
 // ==================== K8s API Interface ====================
 
 /**
@@ -270,6 +344,31 @@ export interface IK8sApi {
     context?: string,
     clusterName?: string
   ): Promise<import('./index').ImportConnectionsResponse>
+
+  // K8s resource listing (requires cluster_id)
+  /** List all namespaces in a cluster */
+  listNamespaces(clusterId: number): Promise<string[]>
+
+  /** List deployments in a namespace */
+  listDeployments(clusterId: number, namespace: string): Promise<K8sDeployment[]>
+
+  /** List pods in a namespace */
+  listPods(clusterId: number, namespace: string): Promise<K8sPod[]>
+
+  /** List configmaps in a namespace */
+  listConfigMaps(clusterId: number, namespace: string): Promise<K8sConfigMapInfo[]>
+
+  /** Get configmap data */
+  getConfigMapData(clusterId: number, namespace: string, name: string): Promise<Record<string, string>>
+
+  /** List secrets in a namespace (metadata only) */
+  listSecrets(clusterId: number, namespace: string): Promise<K8sSecretInfo[]>
+
+  /** List services in a namespace */
+  listServices(clusterId: number, namespace: string): Promise<K8sServiceInfo[]>
+
+  /** List ingresses in a namespace */
+  listIngresses(clusterId: number, namespace: string): Promise<K8sIngressInfo[]>
 }
 
 // ==================== Port Forward API Interface ====================

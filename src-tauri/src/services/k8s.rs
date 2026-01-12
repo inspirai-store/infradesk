@@ -3,7 +3,9 @@
 //! This service handles K8s cluster connections and service discovery.
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use k8s_openapi::api::core::v1::{Pod, Secret, Service};
+use k8s_openapi::api::apps::v1::Deployment;
+use k8s_openapi::api::core::v1::{ConfigMap, Pod, Secret, Service};
+use k8s_openapi::api::networking::v1::Ingress;
 use kube::{
     api::{Api, ListParams},
     config::{KubeConfigOptions, Kubeconfig},
@@ -11,7 +13,10 @@ use kube::{
 };
 use std::collections::HashMap;
 
-use crate::db::models::{DiscoveredService, ListClustersResponse};
+use crate::db::models::{
+    DiscoveredService, K8sConfigMapInfo, K8sDeployment, K8sIngressInfo, K8sPod, K8sSecretInfo,
+    K8sServiceInfo, ListClustersResponse,
+};
 use crate::error::{AppError, AppResult};
 
 /// Known database service types and their detection patterns
@@ -304,5 +309,241 @@ impl K8sService {
         }
 
         None
+    }
+
+    // ==================== K8s Resource List Methods ====================
+
+    /// List all namespace names (public)
+    pub async fn get_namespaces(&self) -> AppResult<Vec<String>> {
+        self.list_namespaces().await
+    }
+
+    /// List deployments in a namespace
+    pub async fn list_deployments(&self, namespace: &str) -> AppResult<Vec<K8sDeployment>> {
+        let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
+        let list = deployments
+            .list(&ListParams::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list deployments: {}", e)))?;
+
+        Ok(list
+            .items
+            .into_iter()
+            .map(|d| {
+                let spec = d.spec.as_ref();
+                let status = d.status.as_ref();
+                K8sDeployment {
+                    name: d.metadata.name.unwrap_or_default(),
+                    namespace: d.metadata.namespace.unwrap_or_else(|| namespace.to_string()),
+                    replicas: spec.and_then(|s| s.replicas).unwrap_or(0),
+                    ready_replicas: status.and_then(|s| s.ready_replicas).unwrap_or(0),
+                    available_replicas: status.and_then(|s| s.available_replicas).unwrap_or(0),
+                    labels: d.metadata.labels.unwrap_or_default().into_iter().collect(),
+                    created_at: d
+                        .metadata
+                        .creation_timestamp
+                        .map(|t| t.0.to_rfc3339()),
+                }
+            })
+            .collect())
+    }
+
+    /// List pods in a namespace
+    pub async fn list_pods(&self, namespace: &str) -> AppResult<Vec<K8sPod>> {
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), namespace);
+        let list = pods
+            .list(&ListParams::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list pods: {}", e)))?;
+
+        Ok(list
+            .items
+            .into_iter()
+            .map(|p| {
+                let status = p.status.as_ref();
+                let container_statuses = status.and_then(|s| s.container_statuses.as_ref());
+
+                // Calculate ready count
+                let (ready_count, total_count) = container_statuses
+                    .map(|cs| {
+                        let ready = cs.iter().filter(|c| c.ready).count();
+                        (ready, cs.len())
+                    })
+                    .unwrap_or((0, 0));
+
+                // Calculate total restarts
+                let restarts: i32 = container_statuses
+                    .map(|cs| cs.iter().map(|c| c.restart_count).sum())
+                    .unwrap_or(0);
+
+                K8sPod {
+                    name: p.metadata.name.unwrap_or_default(),
+                    namespace: p.metadata.namespace.unwrap_or_else(|| namespace.to_string()),
+                    status: status
+                        .and_then(|s| s.phase.clone())
+                        .unwrap_or_else(|| "Unknown".to_string()),
+                    ready: format!("{}/{}", ready_count, total_count),
+                    restarts,
+                    node: p.spec.as_ref().and_then(|s| s.node_name.clone()),
+                    ip: status.and_then(|s| s.pod_ip.clone()),
+                    created_at: p.metadata.creation_timestamp.map(|t| t.0.to_rfc3339()),
+                }
+            })
+            .collect())
+    }
+
+    /// List ConfigMaps in a namespace (metadata only)
+    pub async fn list_configmaps(&self, namespace: &str) -> AppResult<Vec<K8sConfigMapInfo>> {
+        let configmaps: Api<ConfigMap> = Api::namespaced(self.client.clone(), namespace);
+        let list = configmaps
+            .list(&ListParams::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list configmaps: {}", e)))?;
+
+        Ok(list
+            .items
+            .into_iter()
+            .map(|cm| K8sConfigMapInfo {
+                name: cm.metadata.name.unwrap_or_default(),
+                namespace: cm.metadata.namespace.unwrap_or_else(|| namespace.to_string()),
+                data_keys: cm.data.map(|d| d.keys().cloned().collect()).unwrap_or_default(),
+                created_at: cm.metadata.creation_timestamp.map(|t| t.0.to_rfc3339()),
+            })
+            .collect())
+    }
+
+    /// Get ConfigMap data by name
+    pub async fn get_configmap_data(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> AppResult<HashMap<String, String>> {
+        let configmaps: Api<ConfigMap> = Api::namespaced(self.client.clone(), namespace);
+        let cm = configmaps
+            .get(name)
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to get configmap: {}", e)))?;
+
+        Ok(cm.data.unwrap_or_default().into_iter().collect())
+    }
+
+    /// List Secrets in a namespace (metadata only, no values)
+    pub async fn list_secrets(&self, namespace: &str) -> AppResult<Vec<K8sSecretInfo>> {
+        let secrets: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
+        let list = secrets
+            .list(&ListParams::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list secrets: {}", e)))?;
+
+        Ok(list
+            .items
+            .into_iter()
+            .map(|s| K8sSecretInfo {
+                name: s.metadata.name.unwrap_or_default(),
+                namespace: s.metadata.namespace.unwrap_or_else(|| namespace.to_string()),
+                secret_type: s.type_.unwrap_or_else(|| "Opaque".to_string()),
+                data_keys: s.data.map(|d| d.keys().cloned().collect()).unwrap_or_default(),
+                created_at: s.metadata.creation_timestamp.map(|t| t.0.to_rfc3339()),
+            })
+            .collect())
+    }
+
+    /// List Services in a namespace
+    pub async fn list_services_info(&self, namespace: &str) -> AppResult<Vec<K8sServiceInfo>> {
+        let services: Api<Service> = Api::namespaced(self.client.clone(), namespace);
+        let list = services
+            .list(&ListParams::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list services: {}", e)))?;
+
+        Ok(list
+            .items
+            .into_iter()
+            .map(|svc| {
+                let spec = svc.spec.as_ref();
+                let status = svc.status.as_ref();
+
+                // Format ports as "port:nodePort/protocol"
+                let ports: Vec<String> = spec
+                    .and_then(|s| s.ports.as_ref())
+                    .map(|ports| {
+                        ports
+                            .iter()
+                            .map(|p| {
+                                let protocol = p.protocol.as_deref().unwrap_or("TCP");
+                                if let Some(node_port) = p.node_port {
+                                    format!("{}:{}/{}", p.port, node_port, protocol)
+                                } else {
+                                    format!("{}/{}", p.port, protocol)
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // Get external IP from LoadBalancer status
+                let external_ip = status
+                    .and_then(|s| s.load_balancer.as_ref())
+                    .and_then(|lb| lb.ingress.as_ref())
+                    .and_then(|ingress| ingress.first())
+                    .and_then(|ing| ing.ip.clone().or_else(|| ing.hostname.clone()));
+
+                K8sServiceInfo {
+                    name: svc.metadata.name.unwrap_or_default(),
+                    namespace: svc.metadata.namespace.unwrap_or_else(|| namespace.to_string()),
+                    service_type: spec
+                        .and_then(|s| s.type_.clone())
+                        .unwrap_or_else(|| "ClusterIP".to_string()),
+                    cluster_ip: spec.and_then(|s| s.cluster_ip.clone()),
+                    external_ip,
+                    ports,
+                    created_at: svc.metadata.creation_timestamp.map(|t| t.0.to_rfc3339()),
+                }
+            })
+            .collect())
+    }
+
+    /// List Ingresses in a namespace
+    pub async fn list_ingresses(&self, namespace: &str) -> AppResult<Vec<K8sIngressInfo>> {
+        let ingresses: Api<Ingress> = Api::namespaced(self.client.clone(), namespace);
+        let list = ingresses
+            .list(&ListParams::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list ingresses: {}", e)))?;
+
+        Ok(list
+            .items
+            .into_iter()
+            .map(|ing| {
+                let spec = ing.spec.as_ref();
+                let status = ing.status.as_ref();
+
+                // Extract hosts from rules
+                let hosts: Vec<String> = spec
+                    .and_then(|s| s.rules.as_ref())
+                    .map(|rules| {
+                        rules
+                            .iter()
+                            .filter_map(|r| r.host.clone())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // Get address from status
+                let address = status
+                    .and_then(|s| s.load_balancer.as_ref())
+                    .and_then(|lb| lb.ingress.as_ref())
+                    .and_then(|ingress| ingress.first())
+                    .and_then(|ing| ing.ip.clone().or_else(|| ing.hostname.clone()));
+
+                K8sIngressInfo {
+                    name: ing.metadata.name.unwrap_or_default(),
+                    namespace: ing.metadata.namespace.unwrap_or_else(|| namespace.to_string()),
+                    hosts,
+                    address,
+                    created_at: ing.metadata.creation_timestamp.map(|t| t.0.to_rfc3339()),
+                }
+            })
+            .collect())
     }
 }

@@ -17,6 +17,12 @@ import type {
   ISavedQueryApi,
   IK8sApi,
   IPortForwardApi,
+  K8sDeployment,
+  K8sPod,
+  K8sConfigMapInfo,
+  K8sSecretInfo,
+  K8sServiceInfo,
+  K8sIngressInfo,
 } from '../../types'
 import type {
   Connection,
@@ -455,6 +461,61 @@ class HttpK8sApi implements IK8sApi {
       context,
       cluster_name: clusterName,
     })
+    return response.data
+  }
+
+  // K8s resource listing methods
+  async listNamespaces(clusterId: number): Promise<string[]> {
+    const response = await api.get<string[]>(`/k8s/clusters/${clusterId}/namespaces`)
+    return response.data
+  }
+
+  async listDeployments(clusterId: number, namespace: string): Promise<K8sDeployment[]> {
+    const response = await api.get<K8sDeployment[]>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/deployments`
+    )
+    return response.data
+  }
+
+  async listPods(clusterId: number, namespace: string): Promise<K8sPod[]> {
+    const response = await api.get<K8sPod[]>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/pods`
+    )
+    return response.data
+  }
+
+  async listConfigMaps(clusterId: number, namespace: string): Promise<K8sConfigMapInfo[]> {
+    const response = await api.get<K8sConfigMapInfo[]>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/configmaps`
+    )
+    return response.data
+  }
+
+  async getConfigMapData(clusterId: number, namespace: string, name: string): Promise<Record<string, string>> {
+    const response = await api.get<Record<string, string>>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/configmaps/${name}`
+    )
+    return response.data
+  }
+
+  async listSecrets(clusterId: number, namespace: string): Promise<K8sSecretInfo[]> {
+    const response = await api.get<K8sSecretInfo[]>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/secrets`
+    )
+    return response.data
+  }
+
+  async listServices(clusterId: number, namespace: string): Promise<K8sServiceInfo[]> {
+    const response = await api.get<K8sServiceInfo[]>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/services`
+    )
+    return response.data
+  }
+
+  async listIngresses(clusterId: number, namespace: string): Promise<K8sIngressInfo[]> {
+    const response = await api.get<K8sIngressInfo[]>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/ingresses`
+    )
     return response.data
   }
 }
