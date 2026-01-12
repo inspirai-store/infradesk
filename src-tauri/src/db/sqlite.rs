@@ -42,6 +42,11 @@ impl SqlitePool {
         Ok(sqlite_pool)
     }
 
+    /// Get a reference to the underlying sqlx pool
+    pub fn pool(&self) -> &Pool<Sqlite> {
+        &self.pool
+    }
+
     /// Initialize database schema
     async fn initialize(&self) -> AppResult<()> {
         sqlx::query(

@@ -157,6 +157,99 @@ fn extract_connection_id(
         ))
 }
 
+/// Ensure K8s connection has an active port forward
+/// For non-K8s connections, return the original connection unchanged
+async fn ensure_port_forward_for_http(
+    state: &AppState,
+    mut conn: Connection,
+) -> Result<Connection, AppError> {
+    // Only handle K8s connections
+    if conn.source.as_deref() != Some("k8s") {
+        return Ok(conn);
+    }
+
+    let connection_id = conn.id.ok_or_else(||
+        AppError::Validation("Connection ID is required".to_string())
+    )?;
+
+    let pf_service = state.port_forward_service.read().await;
+
+    // Try to get existing forward
+    let pf = match pf_service.get_by_connection(connection_id).await {
+        Ok(existing) if existing.status == "active" => {
+            // Verify port is actually listening
+            if is_port_listening(existing.local_port as u16).await {
+                log::info!("Using existing port forward on port {}", existing.local_port);
+                existing
+            } else {
+                // Port not available, restart
+                log::info!("Port {} not listening, restarting forward", existing.local_port);
+                drop(pf_service);
+                let pf_service = state.port_forward_service.write().await;
+                let local_port = conn.forward_local_port.filter(|&p| p > 0).map(|p| p as u16);
+                pf_service.start(connection_id, local_port).await?
+            }
+        }
+        Ok(existing) => {
+            // Exists but not active, try reconnect
+            log::info!("Port forward exists but not active (status: {}), reconnecting", existing.status);
+            drop(pf_service);
+            let pf_service = state.port_forward_service.write().await;
+            let local_port = conn.forward_local_port.filter(|&p| p > 0).map(|p| p as u16);
+            pf_service.reconnect(&existing.id.unwrap_or_default(), local_port).await?
+        }
+        Err(e) => {
+            // Does not exist, create new forward
+            log::info!("No port forward found for connection {} (err: {}), starting new one", connection_id, e);
+            drop(pf_service);
+            let pf_service = state.port_forward_service.write().await;
+            let local_port = conn.forward_local_port.filter(|&p| p > 0).map(|p| p as u16);
+            pf_service.start(connection_id, local_port).await?
+        }
+    };
+
+    let port = pf.local_port as u16;
+
+    // Wait for port to become available (max 10 seconds)
+    let max_wait = Duration::from_secs(10);
+    let check_interval = Duration::from_millis(200);
+    let start = std::time::Instant::now();
+
+    log::info!("Waiting for port {} to become available...", port);
+
+    while start.elapsed() < max_wait {
+        if is_port_listening(port).await {
+            log::info!("Port {} is now listening after {:?}", port, start.elapsed());
+            break;
+        }
+        tokio::time::sleep(check_interval).await;
+    }
+
+    if !is_port_listening(port).await {
+        return Err(AppError::PortForward(format!(
+            "Port forward on {} did not become available within {:?}",
+            port, max_wait
+        )));
+    }
+
+    // Update forward_local_port in database if changed
+    if conn.forward_local_port != Some(pf.local_port) {
+        let conn_service = ConnectionService::new(state.pool.clone());
+        conn_service.update_forward_port(connection_id, pf.local_port).await?;
+        conn.forward_local_port = Some(pf.local_port);
+        log::info!("Updated forward_local_port to {} for connection {}", pf.local_port, connection_id);
+    }
+
+    Ok(conn)
+}
+
+/// Check if a port is listening
+async fn is_port_listening(port: u16) -> bool {
+    tokio::net::TcpStream::connect(format!("127.0.0.1:{}", port))
+        .await
+        .is_ok()
+}
+
 // ==================== Connection handlers ====================
 
 async fn get_all_connections(
@@ -619,6 +712,7 @@ async fn mysql_get_info(
     let connection_id = extract_connection_id(params.connection_id, &headers)?;
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     let info = mysql_service.get_info().await?;
     Ok(Json(info))
@@ -632,6 +726,7 @@ async fn mysql_list_databases(
     let connection_id = extract_connection_id(params.connection_id, &headers)?;
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     let databases = mysql_service.list_databases().await?;
     Ok(Json(databases))
@@ -646,6 +741,7 @@ async fn mysql_create_database(
     let connection_id = extract_connection_id(params.connection_id, &headers)?;
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     mysql_service.create_database(&data).await?;
     Ok(StatusCode::CREATED)
@@ -660,6 +756,7 @@ async fn mysql_drop_database(
     let connection_id = extract_connection_id(params.connection_id, &headers)?;
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     mysql_service.drop_database(&name).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -674,6 +771,7 @@ async fn mysql_list_tables(
     let connection_id = extract_connection_id(params.connection_id, &headers)?;
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     let tables = mysql_service.list_tables(&db).await?;
     Ok(Json(tables))
@@ -688,6 +786,7 @@ async fn mysql_drop_table(
     let connection_id = extract_connection_id(params.connection_id, &headers)?;
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     mysql_service.drop_table(&db, &table).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -702,6 +801,7 @@ async fn mysql_get_table_schema(
     let connection_id = extract_connection_id(params.connection_id, &headers)?;
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     let schema = mysql_service.get_table_schema(&db, &table).await?;
     Ok(Json(schema))
@@ -716,6 +816,7 @@ async fn mysql_get_rows(
     let connection_id = extract_connection_id(params.connection_id, &headers)?;
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     let page = params.page.unwrap_or(1);
     let page_size = params.page_size.unwrap_or(100);
@@ -730,6 +831,7 @@ async fn mysql_insert_row(
 ) -> Result<Json<u64>, AppError> {
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(req.connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     let id = mysql_service.insert_row(&db, &table, &req.data).await?;
     Ok(Json(id))
@@ -742,6 +844,7 @@ async fn mysql_update_record(
 ) -> Result<Json<u64>, AppError> {
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(req.connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     let affected = mysql_service
         .update_record(&db, &table, &req.primary_key, &req.primary_value, &req.updates)
@@ -756,6 +859,7 @@ async fn mysql_delete_row(
 ) -> Result<Json<u64>, AppError> {
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(req.connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     let affected = mysql_service.delete_row(&db, &table, &req.where_clause).await?;
     Ok(Json(affected))
@@ -767,6 +871,7 @@ async fn mysql_execute_query(
 ) -> Result<Json<MysqlQueryResult>, AppError> {
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(req.connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     let result = mysql_service.execute_query(&req.database, &req.query).await?;
     Ok(Json(result))
@@ -811,6 +916,7 @@ async fn redis_get_info(
     let connection_id = extract_connection_id(params.connection_id, &headers)?;
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mut redis_service = RedisService::connect(&connection).await?;
     let info = redis_service.get_info().await?;
     Ok(Json(info))
@@ -824,6 +930,7 @@ async fn redis_list_keys(
     let connection_id = extract_connection_id(params.connection_id, &headers)?;
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mut redis_service = RedisService::connect(&connection).await?;
     let pattern = params.pattern.as_deref().unwrap_or("*");
     let cursor = params.cursor.unwrap_or(0);
@@ -841,6 +948,7 @@ async fn redis_get_key(
     let connection_id = extract_connection_id(params.connection_id, &headers)?;
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mut redis_service = RedisService::connect(&connection).await?;
     let value = redis_service.get_key(&key).await?;
     Ok(Json(value))
@@ -852,6 +960,7 @@ async fn redis_set_key(
 ) -> Result<StatusCode, AppError> {
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(req.connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mut redis_service = RedisService::connect(&connection).await?;
     let set_req = SetKeyRequest {
         key: req.key,
@@ -872,6 +981,7 @@ async fn redis_delete_key(
     let connection_id = extract_connection_id(params.connection_id, &headers)?;
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mut redis_service = RedisService::connect(&connection).await?;
     redis_service.delete_key(&key).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -884,6 +994,7 @@ async fn redis_set_ttl(
 ) -> Result<StatusCode, AppError> {
     let conn_service = ConnectionService::new(state.pool.clone());
     let connection = conn_service.get_by_id(req.connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mut redis_service = RedisService::connect(&connection).await?;
     redis_service.set_ttl(&key, req.ttl).await?;
     Ok(StatusCode::OK)

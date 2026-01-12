@@ -145,6 +145,21 @@ impl ConnectionService {
         self.pool.delete_connection(id).await
     }
 
+    /// Update only the forward_local_port for a connection
+    pub async fn update_forward_port(&self, id: i64, port: i32) -> AppResult<()> {
+        use crate::error::AppError;
+
+        sqlx::query("UPDATE connections SET forward_local_port = ? WHERE id = ?")
+            .bind(port)
+            .bind(id)
+            .execute(self.pool.pool())
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+
+        log::info!("ConnectionService::update_forward_port - id: {}, port: {}", id, port);
+        Ok(())
+    }
+
     /// Test a connection without saving
     pub async fn test(&self, conn: &Connection) -> AppResult<TestConnectionResult> {
         match conn.conn_type.as_str() {
