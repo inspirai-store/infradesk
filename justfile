@@ -2,7 +2,8 @@
 # ============================
 #
 # Usage:
-#   just dev     - Start Tauri desktop app in development mode
+#   just dev     - Start Tauri desktop app in development mode (IPC)
+#   just web     - Start Web debug mode (HTTP API + Browser UI)
 #   just build   - Build production release
 
 # Directories
@@ -12,11 +13,28 @@ frontend_dir := "services/zeni-x/frontend"
 default:
     @just --list
 
-# Start Tauri desktop app in development mode
+# Start Tauri desktop app in development mode (IPC)
 dev: _check-deps
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Starting Tauri dev mode..."
+    cargo tauri dev
+
+# Start Web debug mode (HTTP API + Browser UI)
+# Tauri window shows log viewer, browser shows full UI
+web: _check-deps
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Starting Web debug mode..."
+    echo ""
+    echo "  HTTP API:   http://127.0.0.1:12420"
+    echo "  Browser UI: http://localhost:15073"
+    echo "  Tauri:      Log viewer window"
+    echo ""
+    echo "Open http://localhost:15073 in your browser to use the UI."
+    echo "The Tauri window will show backend logs."
+    echo ""
+    export ZENI_WEB_MODE=1
     cargo tauri dev
 
 # Build Tauri desktop app for production

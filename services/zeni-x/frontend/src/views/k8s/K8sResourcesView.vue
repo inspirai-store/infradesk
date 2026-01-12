@@ -12,9 +12,19 @@ import {
   NTabs,
   NTabPane,
   NSpin,
+  NModal,
+  NForm,
+  NFormItem,
+  NInput,
+  NUpload,
+  NRadioGroup,
+  NRadio,
+  NCheckboxGroup,
+  NCheckbox,
+  NDivider,
   useMessage
 } from 'naive-ui'
-import { CloudOutline, CheckmarkCircleOutline, CloseCircleOutline, RefreshOutline } from '@vicons/ionicons5'
+import { CloudOutline, CheckmarkCircleOutline, CloseCircleOutline, RefreshOutline, AddOutline } from '@vicons/ionicons5'
 import { useRouter } from 'vue-router'
 import { api } from '@/api/adapter'
 import type { Cluster } from '@/api'
@@ -34,6 +44,20 @@ const loading = ref(false)
 const namespacesLoading = ref(false)
 const activeTab = ref('workload')
 
+// Add Cluster Modal State
+const showAddClusterModal = ref(false)
+const kubeconfigContent = ref('')
+const availableContexts = ref<string[]>([])
+const selectedContexts = ref<string[]>([])
+const configSource = ref<'upload' | 'local'>('upload')
+const loadingLocalConfig = ref(false)
+const clusterForm = ref({
+  name: '',
+  context: '',
+  environment: 'development'
+})
+const saving = ref(false)
+
 // Computed
 const selectedCluster = computed(() =>
   clusters.value.find(c => c.id === selectedClusterId.value)
@@ -52,6 +76,19 @@ const namespaceOptions = computed(() =>
     value: ns
   }))
 )
+
+const contextOptions = computed(() =>
+  availableContexts.value.map(ctx => ({
+    label: ctx,
+    value: ctx
+  }))
+)
+
+const envOptions = [
+  { label: 'Development', value: 'development' },
+  { label: 'Staging', value: 'staging' },
+  { label: 'Production', value: 'production' }
+]
 
 // Methods
 async function fetchClusters() {
@@ -112,6 +149,147 @@ function goToConnections() {
   router.push('/connections')
 }
 
+// Add Cluster Modal Functions
+function openAddClusterModal() {
+  showAddClusterModal.value = true
+  resetClusterForm()
+}
+
+function resetClusterForm() {
+  kubeconfigContent.value = ''
+  availableContexts.value = []
+  selectedContexts.value = []
+  configSource.value = 'upload'
+  clusterForm.value = {
+    name: '',
+    context: '',
+    environment: 'development'
+  }
+}
+
+async function handleLoadLocalConfig() {
+  loadingLocalConfig.value = true
+  try {
+    const content = await api.k8s.readLocalKubeconfig()
+    kubeconfigContent.value = content
+
+    // Parse kubeconfig to get available contexts
+    const result = await api.k8s.listClusters(content)
+    availableContexts.value = result.clusters || []
+    selectedContexts.value = []
+    message.success(`Found ${availableContexts.value.length} context(s) in local kubeconfig`)
+  } catch (e) {
+    message.error('Failed to read local kubeconfig: ' + (e as Error).message)
+    kubeconfigContent.value = ''
+    availableContexts.value = []
+  } finally {
+    loadingLocalConfig.value = false
+  }
+}
+
+async function handleKubeconfigUpload(options: { file: { file: File } }) {
+  const file = options.file.file
+  if (!file) return
+
+  const reader = new FileReader()
+  reader.onload = async (e) => {
+    kubeconfigContent.value = e.target?.result as string
+
+    // Parse kubeconfig to get available contexts
+    try {
+      const result = await api.k8s.listClusters(kubeconfigContent.value)
+      availableContexts.value = result.clusters || []
+      selectedContexts.value = []
+      if (availableContexts.value.length > 0) {
+        clusterForm.value.context = availableContexts.value[0]
+        clusterForm.value.name = availableContexts.value[0]
+      }
+      message.success('Kubeconfig 解析成功')
+    } catch (e) {
+      message.error('解析 kubeconfig 失败: ' + (e as Error).message)
+      kubeconfigContent.value = ''
+    }
+  }
+  reader.onerror = () => {
+    message.error('读取文件失败')
+  }
+  reader.readAsText(file)
+}
+
+async function handleSaveCluster() {
+  if (!kubeconfigContent.value) {
+    message.warning('请上传 kubeconfig 文件或读取本地配置')
+    return
+  }
+
+  // Multi-select mode (local config with checkbox selection)
+  if (configSource.value === 'local' && selectedContexts.value.length > 0) {
+    saving.value = true
+    try {
+      let lastClusterId: number | undefined
+      let successCount = 0
+
+      for (const ctx of selectedContexts.value) {
+        try {
+          const newCluster = await api.cluster.create({
+            name: ctx,
+            context: ctx,
+            environment: clusterForm.value.environment,
+            kubeconfig: kubeconfigContent.value,
+            is_active: true
+          })
+          successCount++
+          if (newCluster.id) {
+            lastClusterId = newCluster.id
+          }
+        } catch (e) {
+          message.warning(`添加 ${ctx} 失败: ${(e as Error).message}`)
+        }
+      }
+
+      if (successCount > 0) {
+        message.success(`成功添加 ${successCount} 个集群`)
+        showAddClusterModal.value = false
+        await fetchClusters()
+        if (lastClusterId) {
+          selectedClusterId.value = lastClusterId
+        }
+      }
+    } finally {
+      saving.value = false
+    }
+    return
+  }
+
+  // Single mode (upload file or local config with single selection)
+  if (!clusterForm.value.name) {
+    message.warning('请填写集群名称')
+    return
+  }
+
+  saving.value = true
+  try {
+    const newCluster = await api.cluster.create({
+      name: clusterForm.value.name,
+      context: clusterForm.value.context || undefined,
+      environment: clusterForm.value.environment,
+      kubeconfig: kubeconfigContent.value,
+      is_active: true
+    })
+    message.success('集群添加成功')
+    showAddClusterModal.value = false
+    await fetchClusters()
+    // Auto-select the new cluster
+    if (newCluster.id) {
+      selectedClusterId.value = newCluster.id
+    }
+  } catch (e) {
+    message.error('添加失败: ' + (e as Error).message)
+  } finally {
+    saving.value = false
+  }
+}
+
 // Lifecycle
 onMounted(() => {
   fetchClusters()
@@ -159,6 +337,11 @@ watch(selectedClusterId, () => {
             :loading="loading"
             @update:value="handleClusterChange"
           />
+          <NButton quaternary circle @click="openAddClusterModal" title="Add Cluster">
+            <template #icon>
+              <NIcon><AddOutline /></NIcon>
+            </template>
+          </NButton>
           <NSelect
             v-model:value="selectedNamespace"
             :options="namespaceOptions"
@@ -225,6 +408,109 @@ watch(selectedClusterId, () => {
         </NSpin>
       </template>
     </NLayoutContent>
+
+    <!-- Add Cluster Modal -->
+    <NModal
+      v-model:show="showAddClusterModal"
+      preset="card"
+      title="Add K8s Cluster"
+      style="width: 520px"
+      :mask-closable="false"
+    >
+      <NForm :model="clusterForm" label-placement="top">
+        <!-- Config Source Selection -->
+        <NFormItem label="Config Source">
+          <NRadioGroup v-model:value="configSource">
+            <NSpace>
+              <NRadio value="upload">Upload File</NRadio>
+              <NRadio value="local">Local ~/.kube/config</NRadio>
+            </NSpace>
+          </NRadioGroup>
+        </NFormItem>
+
+        <!-- Upload Mode -->
+        <NFormItem v-if="configSource === 'upload'" label="Kubeconfig File" required>
+          <NUpload
+            :max="1"
+            :show-file-list="false"
+            accept=".yaml,.yml,application/x-yaml"
+            :custom-request="handleKubeconfigUpload"
+          >
+            <NButton block :type="kubeconfigContent ? 'success' : 'default'">
+              {{ kubeconfigContent ? 'Uploaded' : 'Click to Upload' }}
+            </NButton>
+          </NUpload>
+        </NFormItem>
+
+        <!-- Local Config Mode -->
+        <NFormItem v-if="configSource === 'local'" label="Local Config">
+          <NButton
+            block
+            :type="kubeconfigContent ? 'success' : 'default'"
+            :loading="loadingLocalConfig"
+            @click="handleLoadLocalConfig"
+          >
+            {{ kubeconfigContent ? `Loaded (${availableContexts.length} contexts)` : 'Read Local Config' }}
+          </NButton>
+        </NFormItem>
+
+        <!-- Multi-select Contexts (Local Mode) -->
+        <NFormItem v-if="configSource === 'local' && availableContexts.length > 0" label="Select Contexts">
+          <NCheckboxGroup v-model:value="selectedContexts" style="width: 100%">
+            <NSpace vertical>
+              <NCheckbox
+                v-for="ctx in availableContexts"
+                :key="ctx"
+                :value="ctx"
+                :label="ctx"
+              />
+            </NSpace>
+          </NCheckboxGroup>
+          <div style="margin-top: 8px; font-size: 12px; color: var(--n-text-color-3)">
+            Select one or more contexts to add as clusters
+          </div>
+        </NFormItem>
+
+        <!-- Single Select Context (Upload Mode) -->
+        <NFormItem v-if="configSource === 'upload' && availableContexts.length > 0" label="Select Context">
+          <NSelect
+            v-model:value="clusterForm.context"
+            :options="contextOptions"
+            placeholder="Select a context"
+          />
+        </NFormItem>
+
+        <NDivider v-if="configSource === 'upload' || (configSource === 'local' && selectedContexts.length === 0)" />
+
+        <!-- Single Cluster Name (Upload Mode or Local without multi-select) -->
+        <NFormItem
+          v-if="configSource === 'upload' || (configSource === 'local' && selectedContexts.length === 0)"
+          label="Cluster Name"
+          required
+        >
+          <NInput
+            v-model:value="clusterForm.name"
+            placeholder="e.g. production-cluster"
+          />
+        </NFormItem>
+
+        <NFormItem label="Environment">
+          <NSelect
+            v-model:value="clusterForm.environment"
+            :options="envOptions"
+          />
+        </NFormItem>
+      </NForm>
+
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="showAddClusterModal = false">Cancel</NButton>
+          <NButton type="primary" :loading="saving" @click="handleSaveCluster">
+            {{ configSource === 'local' && selectedContexts.length > 1 ? `Save ${selectedContexts.length} Clusters` : 'Save' }}
+          </NButton>
+        </NSpace>
+      </template>
+    </NModal>
   </NLayout>
 </template>
 

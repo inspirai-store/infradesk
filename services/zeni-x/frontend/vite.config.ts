@@ -2,9 +2,6 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
-// Check if running in Tauri development mode
-const isTauriDev = process.env.TAURI_ENV_DEBUG !== undefined
-
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -20,16 +17,15 @@ export default defineConfig({
     host: process.env.TAURI_DEV_HOST || 'localhost',
     // Enable HMR in Tauri
     strictPort: true,
-    // Only enable proxy for web mode (when not in Tauri)
-    // In Tauri mode, API calls go through Rust IPC, not HTTP
-    ...(isTauriDev ? {} : {
-      proxy: {
-        '/api': {
-          target: 'http://localhost:15080',
-          changeOrigin: true,
-        },
+    // Proxy /api to Rust HTTP backend for web debug mode
+    // In Tauri IPC mode this proxy is not used (API calls go through IPC)
+    // In web browser mode (VITE_API_MODE=web) this proxy routes to backend
+    proxy: {
+      '/api': {
+        target: 'http://127.0.0.1:12420',
+        changeOrigin: true,
       },
-    }),
+    },
   },
   // Environment variable prefix to expose to the client
   envPrefix: ['VITE_', 'TAURI_ENV_'],

@@ -5,6 +5,7 @@
 use tauri::State;
 
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::db::models::{
     Cluster, Connection, DiscoveredService, ImportConnectionsRequest, ImportConnectionsResponse,
@@ -62,6 +63,35 @@ pub async fn k8s_discover(
 #[tauri::command]
 pub async fn k8s_list_clusters(kubeconfig: String) -> Result<ListClustersResponse, AppError> {
     K8sService::list_contexts_from_kubeconfig(&kubeconfig)
+}
+
+/// Read local kubeconfig file content (~/.kube/config)
+#[tauri::command]
+pub async fn k8s_read_local_kubeconfig() -> Result<String, AppError> {
+    // Get kubeconfig path from KUBECONFIG env or default to ~/.kube/config
+    let kubeconfig_path = std::env::var("KUBECONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| {
+            dirs::home_dir()
+                .unwrap_or_else(|| PathBuf::from("."))
+                .join(".kube")
+                .join("config")
+        });
+
+    if !kubeconfig_path.exists() {
+        return Err(AppError::K8s(format!(
+            "Kubeconfig file not found at: {}",
+            kubeconfig_path.display()
+        )));
+    }
+
+    std::fs::read_to_string(&kubeconfig_path).map_err(|e| {
+        AppError::K8s(format!(
+            "Failed to read kubeconfig from {}: {}",
+            kubeconfig_path.display(),
+            e
+        ))
+    })
 }
 
 /// Import discovered services as connections

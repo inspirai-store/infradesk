@@ -1,10 +1,16 @@
 /**
  * API Adapter Factory
  *
- * This module creates the IPC adapter for Tauri desktop application.
- * HTTP adapter is kept for reference but not used in production.
+ * This module creates the appropriate API adapter based on runtime environment:
+ * - Tauri desktop: IPC adapter (direct Tauri commands)
+ * - Web browser: HTTP adapter (via HTTP API at /api)
+ *
+ * Environment detection uses `@/utils/platform` which checks for Tauri runtime
+ * and can be overridden with VITE_API_MODE environment variable.
  */
 
+import { isTauri } from '@/utils/platform'
+import { createHttpAdapter } from './adapters/http'
 import { createIpcAdapter } from './adapters/ipc'
 import type { IApiAdapter } from './types'
 
@@ -12,11 +18,20 @@ import type { IApiAdapter } from './types'
 let _adapter: IApiAdapter | null = null
 
 /**
- * Create API adapter
+ * Create API adapter based on runtime environment
  *
- * Always uses IPC adapter for Tauri desktop application.
+ * - In Tauri desktop: uses IPC adapter for direct command invocation
+ * - In Web browser: uses HTTP adapter with Vite proxy to backend
  */
 export function createApiAdapter(): IApiAdapter {
+  // Web mode (browser or forced via VITE_API_MODE=web): use HTTP adapter
+  if (!isTauri()) {
+    console.log('[API] Using HTTP adapter (web mode)')
+    return createHttpAdapter()
+  }
+
+  // Tauri desktop mode: use IPC adapter
+  console.log('[API] Using IPC adapter (Tauri mode)')
   return createIpcAdapter()
 }
 

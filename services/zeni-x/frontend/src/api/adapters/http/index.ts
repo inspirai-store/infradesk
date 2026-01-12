@@ -447,6 +447,11 @@ class HttpK8sApi implements IK8sApi {
     return response.data
   }
 
+  async readLocalKubeconfig(): Promise<string> {
+    const response = await api.get<string>('/k8s/local-kubeconfig')
+    return response.data
+  }
+
   async importConnections(
     services: DiscoveredService[],
     forceOverride?: boolean,

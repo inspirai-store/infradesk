@@ -567,6 +567,14 @@ class IpcK8sApi implements IK8sApi {
     }
   }
 
+  async readLocalKubeconfig(): Promise<string> {
+    try {
+      return await invoke<string>('k8s_read_local_kubeconfig')
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
   async importConnections(
     services: DiscoveredService[],
     forceOverride?: boolean,

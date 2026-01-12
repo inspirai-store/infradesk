@@ -336,6 +336,9 @@ export interface IK8sApi {
   /** List clusters from kubeconfig */
   listClusters(kubeconfig: string): Promise<{ clusters: string[] }>
 
+  /** Read local kubeconfig file (~/.kube/config) */
+  readLocalKubeconfig(): Promise<string>
+
   /** Import discovered services as connections */
   importConnections(
     services: import('./index').DiscoveredService[],

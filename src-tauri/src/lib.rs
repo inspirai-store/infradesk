@@ -6,13 +6,16 @@
 mod commands;
 pub mod db;
 pub mod error;
+pub mod http;
 pub mod services;
 
+use std::env;
 use std::path::PathBuf;
 use tauri::Manager;
 
 use commands::PortForwardState;
 use db::SqlitePool;
+use services::PortForwardService;
 
 /// Get the application data directory for database storage
 fn get_app_data_dir(app: &tauri::App) -> PathBuf {
@@ -23,8 +26,11 @@ fn get_app_data_dir(app: &tauri::App) -> PathBuf {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Check if web debug mode is enabled
+    let is_web_mode = env::var("ZENI_WEB_MODE").is_ok();
+
     tauri::Builder::default()
-        .setup(|app| {
+        .setup(move |app| {
             // Initialize logging in debug mode
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -49,9 +55,42 @@ pub fn run() {
             match pool {
                 Ok(pool) => {
                     log::info!("SQLite database initialized successfully");
-                    app.manage(pool);
+
                     // Initialize port forward state
-                    app.manage(PortForwardState::new());
+                    let pf_state = PortForwardState::new();
+
+                    if is_web_mode {
+                        // Web mode: start HTTP server
+                        log::info!("Starting in Web debug mode...");
+
+                        let pool_clone = pool.clone();
+                        let pf_service = PortForwardService::new(pool_clone.clone());
+
+                        // Start HTTP server in background
+                        tauri::async_runtime::spawn(async move {
+                            let router = crate::http::create_router(pool_clone, pf_service);
+                            let listener = tokio::net::TcpListener::bind("127.0.0.1:12420")
+                                .await
+                                .expect("Failed to bind HTTP server to 127.0.0.1:12420");
+                            log::info!("HTTP server started: http://127.0.0.1:12420");
+                            axum::serve(listener, router).await.ok();
+                        });
+
+                        // Configure window for log viewer mode
+                        if let Some(window) = app.get_webview_window("main") {
+                            window.set_title("Zeni-X Log Viewer").ok();
+                            window.set_size(tauri::LogicalSize::new(700.0, 450.0)).ok();
+                            // Navigate to log viewer page
+                            // In dev mode, Vite serves the public folder at root
+                            let log_viewer_url = tauri::Url::parse("http://localhost:15073/log-viewer.html")
+                                .expect("Invalid log viewer URL");
+                            window.navigate(log_viewer_url).ok();
+                            log::info!("Window configured for log viewer mode");
+                        }
+                    }
+
+                    app.manage(pool);
+                    app.manage(pf_state);
                 }
                 Err(e) => {
                     log::error!("Failed to initialize SQLite database: {}", e);
@@ -81,6 +120,7 @@ pub fn run() {
             // K8s operations
             commands::k8s_discover,
             commands::k8s_list_clusters,
+            commands::k8s_read_local_kubeconfig,
             commands::k8s_import_connections,
             // K8s resource listing
             commands::k8s_list_namespaces,
