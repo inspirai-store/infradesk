@@ -25,6 +25,25 @@ dev: _check-deps
 web: _check-deps
     #!/usr/bin/env bash
     set -euo pipefail
+
+    # Kill any existing processes on our ports
+    echo "Checking for existing processes..."
+
+    # Kill processes on HTTP API port (12420)
+    if lsof -ti:12420 >/dev/null 2>&1; then
+        echo "  Stopping process on port 12420..."
+        lsof -ti:12420 | xargs kill -9 2>/dev/null || true
+    fi
+
+    # Kill processes on Vite dev server port (15073)
+    if lsof -ti:15073 >/dev/null 2>&1; then
+        echo "  Stopping process on port 15073..."
+        lsof -ti:15073 | xargs kill -9 2>/dev/null || true
+    fi
+
+    # Small delay to ensure ports are released
+    sleep 0.5
+
     echo "Starting Web debug mode..."
     echo ""
     echo "  HTTP API:   http://127.0.0.1:12420"

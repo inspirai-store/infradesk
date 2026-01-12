@@ -162,7 +162,7 @@ class HttpConnectionApi implements IConnectionApi {
   }
 
   async getByType(type: string): Promise<Connection[]> {
-    const response = await api.get<Connection[]>(`/connections/types/${type}`)
+    const response = await api.get<Connection[]>(`/connections/type/${type}`)
     return response.data
   }
 }

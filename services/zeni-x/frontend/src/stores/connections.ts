@@ -50,7 +50,8 @@ export const useConnectionsStore = defineStore('connections', () => {
     error.value = null
     try {
       const data = await connectionApi.getAll()
-      connections.value = data || []
+      // Ensure we always have an array
+      connections.value = Array.isArray(data) ? data : []
       
       // Auto-select default connections or first available for each type
       for (const type of ['mysql', 'redis', 'mongodb', 'minio']) {
@@ -76,9 +77,11 @@ export const useConnectionsStore = defineStore('connections', () => {
     error.value = null
     try {
       const data = await connectionApi.getByType(type)
+      // Ensure data is an array
+      const typeConnections = Array.isArray(data) ? data : []
       // Update only connections of this type
       const otherConnections = connections.value.filter(c => c.type !== type)
-      connections.value = [...otherConnections, ...(data || [])]
+      connections.value = [...otherConnections, ...typeConnections]
     } catch (e) {
       error.value = (e as Error).message
     } finally {
