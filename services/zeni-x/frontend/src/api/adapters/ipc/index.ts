@@ -25,6 +25,11 @@ import type {
   K8sSecretInfo,
   K8sServiceInfo,
   K8sIngressInfo,
+  K8sJob,
+  K8sCronJob,
+  K8sStatefulSet,
+  K8sDaemonSet,
+  K8sReplicaSet,
   UserSetting,
   BatchSettingsResponse,
   LLMConfigResponse,
@@ -642,6 +647,22 @@ class IpcK8sApi implements IK8sApi {
     }
   }
 
+  async getPodDetail(clusterId: number, namespace: string, name: string): Promise<import('../../types').K8sPodDetail> {
+    try {
+      return await invoke<import('../../types').K8sPodDetail>('k8s_get_pod_detail', { clusterId, namespace, name })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async getPodLogs(clusterId: number, namespace: string, name: string, container?: string, tailLines?: number): Promise<string> {
+    try {
+      return await invoke<string>('k8s_get_pod_logs', { clusterId, namespace, name, container, tailLines })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
   async listConfigMaps(clusterId: number, namespace: string): Promise<K8sConfigMapInfo[]> {
     try {
       return await invoke<K8sConfigMapInfo[]>('k8s_list_configmaps', { clusterId, namespace })
@@ -658,9 +679,33 @@ class IpcK8sApi implements IK8sApi {
     }
   }
 
+  async updateConfigMap(clusterId: number, namespace: string, name: string, data: Record<string, string>): Promise<void> {
+    try {
+      await invoke('k8s_update_configmap', { clusterId, namespace, name, data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
   async listSecrets(clusterId: number, namespace: string): Promise<K8sSecretInfo[]> {
     try {
       return await invoke<K8sSecretInfo[]>('k8s_list_secrets', { clusterId, namespace })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async getSecretData(clusterId: number, namespace: string, name: string): Promise<Record<string, string>> {
+    try {
+      return await invoke<Record<string, string>>('k8s_get_secret_data', { clusterId, namespace, name })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async updateSecret(clusterId: number, namespace: string, name: string, data: Record<string, string>): Promise<void> {
+    try {
+      await invoke('k8s_update_secret', { clusterId, namespace, name, data })
     } catch (error) {
       handleInvokeError(error)
     }
@@ -677,6 +722,47 @@ class IpcK8sApi implements IK8sApi {
   async listIngresses(clusterId: number, namespace: string): Promise<K8sIngressInfo[]> {
     try {
       return await invoke<K8sIngressInfo[]>('k8s_list_ingresses', { clusterId, namespace })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  // Extended workload types
+  async listJobs(clusterId: number, namespace: string): Promise<K8sJob[]> {
+    try {
+      return await invoke<K8sJob[]>('k8s_list_jobs', { clusterId, namespace })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async listCronJobs(clusterId: number, namespace: string): Promise<K8sCronJob[]> {
+    try {
+      return await invoke<K8sCronJob[]>('k8s_list_cronjobs', { clusterId, namespace })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async listStatefulSets(clusterId: number, namespace: string): Promise<K8sStatefulSet[]> {
+    try {
+      return await invoke<K8sStatefulSet[]>('k8s_list_statefulsets', { clusterId, namespace })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async listDaemonSets(clusterId: number, namespace: string): Promise<K8sDaemonSet[]> {
+    try {
+      return await invoke<K8sDaemonSet[]>('k8s_list_daemonsets', { clusterId, namespace })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async listReplicaSets(clusterId: number, namespace: string): Promise<K8sReplicaSet[]> {
+    try {
+      return await invoke<K8sReplicaSet[]>('k8s_list_replicasets', { clusterId, namespace })
     } catch (error) {
       handleInvokeError(error)
     }

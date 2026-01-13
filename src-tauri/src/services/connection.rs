@@ -140,6 +140,65 @@ impl ConnectionService {
         Ok(updated)
     }
 
+    /// Partial update - only update provided fields
+    pub async fn partial_update(
+        &self,
+        id: i64,
+        update: crate::db::models::UpdateConnectionRequest,
+    ) -> AppResult<Connection> {
+        // First get the existing connection
+        let mut existing = self.pool.get_connection(id).await?;
+        // Decrypt existing password
+        Self::decrypt_password(&mut existing);
+
+        // Apply partial updates (only if Some)
+        if let Some(name) = update.name {
+            existing.name = name;
+        }
+        if let Some(conn_type) = update.conn_type {
+            existing.conn_type = conn_type;
+        }
+        if let Some(host) = update.host {
+            existing.host = host;
+        }
+        if let Some(port) = update.port {
+            existing.port = port;
+        }
+        if let Some(username) = update.username {
+            existing.username = Some(username);
+        }
+        if let Some(password) = update.password {
+            existing.password = Some(password);
+        }
+        if let Some(database_name) = update.database_name {
+            existing.database_name = Some(database_name);
+        }
+        if let Some(is_default) = update.is_default {
+            existing.is_default = is_default;
+        }
+        if let Some(source) = update.source {
+            existing.source = Some(source);
+        }
+        if let Some(k8s_namespace) = update.k8s_namespace {
+            existing.k8s_namespace = Some(k8s_namespace);
+        }
+        if let Some(k8s_service_name) = update.k8s_service_name {
+            existing.k8s_service_name = Some(k8s_service_name);
+        }
+        if let Some(k8s_service_port) = update.k8s_service_port {
+            existing.k8s_service_port = Some(k8s_service_port);
+        }
+        if let Some(cluster_id) = update.cluster_id {
+            existing.cluster_id = Some(cluster_id);
+        }
+        if let Some(forward_local_port) = update.forward_local_port {
+            existing.forward_local_port = Some(forward_local_port);
+        }
+
+        // Now use the full update method
+        self.update(id, existing).await
+    }
+
     /// Delete a connection
     pub async fn delete(&self, id: i64) -> AppResult<()> {
         self.pool.delete_connection(id).await

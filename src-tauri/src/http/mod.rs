@@ -27,7 +27,8 @@ use crate::db::models::{
     ListClustersResponse, MysqlDatabase, MysqlQueryResult, MysqlServerInfo, MysqlTable,
     MysqlTableData, MysqlTableSchema, PortForward, QueryHistory, QueryHistoryListResponse,
     RedisKeyListResponse, RedisKeyValue, RedisServerInfo, SavedQuery, SetKeyRequest,
-    TestConnectionResult, TestK8sConnectionRequest, UpdateSavedQueryRequest,
+    TestConnectionRequest, TestConnectionResult, TestK8sConnectionRequest, UpdateConnectionRequest,
+    UpdateSavedQueryRequest,
 };
 use crate::db::SqlitePool;
 use crate::error::AppError;
@@ -79,11 +80,20 @@ pub fn create_router(pool: SqlitePool, pf_service: PortForwardService) -> Router
         .route("/api/k8s/clusters/:cluster_id/namespaces", get(k8s_list_namespaces_http))
         .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/deployments", get(k8s_list_deployments_http))
         .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/pods", get(k8s_list_pods_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/pods/:name", get(k8s_get_pod_detail_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/pods/:name/logs", get(k8s_get_pod_logs_http))
         .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/configmaps", get(k8s_list_configmaps_http))
-        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/configmaps/:name", get(k8s_get_configmap_data_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/configmaps/:name", get(k8s_get_configmap_data_http).put(k8s_update_configmap_http))
         .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/secrets", get(k8s_list_secrets_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/secrets/:name", get(k8s_get_secret_data_http).put(k8s_update_secret_http))
         .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/services", get(k8s_list_services_http))
         .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/ingresses", get(k8s_list_ingresses_http))
+        // Extended workload types
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/jobs", get(k8s_list_jobs_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/cronjobs", get(k8s_list_cronjobs_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/statefulsets", get(k8s_list_statefulsets_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/daemonsets", get(k8s_list_daemonsets_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/replicasets", get(k8s_list_replicasets_http))
         // Port forward routes
         .route("/api/port-forward", get(list_port_forwards))
         .route("/api/port-forward/start", post(start_port_forward))
@@ -315,10 +325,11 @@ async fn create_connection(
 async fn update_connection(
     State(state): State<Arc<AppState>>,
     Path(id): Path<i64>,
-    Json(data): Json<Connection>,
+    Json(data): Json<UpdateConnectionRequest>,
 ) -> Result<Json<Connection>, AppError> {
     let service = ConnectionService::new(state.pool.clone());
-    let connection = service.update(id, data).await?;
+    // Use partial_update to only update provided fields
+    let connection = service.partial_update(id, data).await?;
     Ok(Json(connection))
 }
 
@@ -333,10 +344,12 @@ async fn delete_connection(
 
 async fn test_connection(
     State(state): State<Arc<AppState>>,
-    Json(data): Json<Connection>,
+    Json(data): Json<TestConnectionRequest>,
 ) -> Result<Json<TestConnectionResult>, AppError> {
     let service = ConnectionService::new(state.pool.clone());
-    let result = service.test(&data).await?;
+    // Convert TestConnectionRequest to Connection for testing
+    let conn = data.to_connection();
+    let result = service.test(&conn).await?;
     Ok(Json(result))
 }
 
@@ -722,12 +735,17 @@ async fn k8s_import_connections(
 
 // ==================== K8s Resource Listing handlers ====================
 
-use crate::db::models::{K8sDeployment, K8sPod, K8sConfigMapInfo, K8sSecretInfo, K8sServiceInfo, K8sIngressInfo};
+use crate::db::models::{
+    K8sDeployment, K8sPod, K8sConfigMapInfo, K8sSecretInfo, K8sServiceInfo, K8sIngressInfo,
+    K8sJob, K8sCronJob, K8sStatefulSet, K8sDaemonSet, K8sReplicaSet,
+};
 
 /// Helper to get K8s service from cluster ID
 async fn get_k8s_service_from_cluster(pool: &SqlitePool, cluster_id: i64) -> Result<K8sService, AppError> {
     let cluster_service = ClusterService::new(pool.clone());
-    let cluster = cluster_service.get_by_id(cluster_id).await?;
+    // Use get_with_kubeconfig to get the full cluster including kubeconfig
+    // (get_by_id clears kubeconfig for security when exposed via API)
+    let cluster = cluster_service.get_with_kubeconfig(cluster_id).await?;
 
     let kubeconfig = cluster.kubeconfig.ok_or_else(|| {
         AppError::K8s("Cluster has no kubeconfig".to_string())
@@ -761,6 +779,31 @@ async fn k8s_list_pods_http(
     let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
     let pods = k8s.list_pods(&namespace).await?;
     Ok(Json(pods))
+}
+
+async fn k8s_get_pod_detail_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace, name)): Path<(i64, String, String)>,
+) -> Result<Json<crate::db::models::K8sPodDetail>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let detail = k8s.get_pod_detail(&namespace, &name).await?;
+    Ok(Json(detail))
+}
+
+#[derive(Deserialize)]
+struct PodLogsQuery {
+    container: Option<String>,
+    tail: Option<i64>,
+}
+
+async fn k8s_get_pod_logs_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace, name)): Path<(i64, String, String)>,
+    Query(query): Query<PodLogsQuery>,
+) -> Result<String, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let logs = k8s.get_pod_logs(&namespace, &name, query.container.as_deref(), query.tail).await?;
+    Ok(logs)
 }
 
 async fn k8s_list_configmaps_http(
@@ -806,6 +849,45 @@ async fn k8s_list_ingresses_http(
     let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
     let ingresses = k8s.list_ingresses(&namespace).await?;
     Ok(Json(ingresses))
+}
+
+async fn k8s_get_secret_data_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace, name)): Path<(i64, String, String)>,
+) -> Result<Json<std::collections::HashMap<String, String>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let data = k8s.get_secret_data(&namespace, &name).await?;
+    Ok(Json(data))
+}
+
+#[derive(Deserialize)]
+struct UpdateSecretRequest {
+    data: std::collections::HashMap<String, String>,
+}
+
+async fn k8s_update_secret_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace, name)): Path<(i64, String, String)>,
+    Json(req): Json<UpdateSecretRequest>,
+) -> Result<StatusCode, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    k8s.update_secret(&namespace, &name, req.data).await?;
+    Ok(StatusCode::OK)
+}
+
+#[derive(Deserialize)]
+struct UpdateConfigMapRequest {
+    data: std::collections::HashMap<String, String>,
+}
+
+async fn k8s_update_configmap_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace, name)): Path<(i64, String, String)>,
+    Json(req): Json<UpdateConfigMapRequest>,
+) -> Result<StatusCode, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    k8s.update_configmap(&namespace, &name, req.data).await?;
+    Ok(StatusCode::OK)
 }
 
 // ==================== MySQL handlers ====================
@@ -1622,4 +1704,51 @@ async fn get_llm_api_key_http(
     let service = LLMConfigService::new(state.pool.clone());
     let api_key = service.get_api_key(id).await?;
     Ok(Json(api_key))
+}
+
+// ==================== Extended K8s Workload handlers ====================
+
+async fn k8s_list_jobs_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+) -> Result<Json<Vec<K8sJob>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let jobs = k8s.list_jobs(&namespace).await?;
+    Ok(Json(jobs))
+}
+
+async fn k8s_list_cronjobs_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+) -> Result<Json<Vec<K8sCronJob>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let cronjobs = k8s.list_cronjobs(&namespace).await?;
+    Ok(Json(cronjobs))
+}
+
+async fn k8s_list_statefulsets_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+) -> Result<Json<Vec<K8sStatefulSet>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let statefulsets = k8s.list_statefulsets(&namespace).await?;
+    Ok(Json(statefulsets))
+}
+
+async fn k8s_list_daemonsets_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+) -> Result<Json<Vec<K8sDaemonSet>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let daemonsets = k8s.list_daemonsets(&namespace).await?;
+    Ok(Json(daemonsets))
+}
+
+async fn k8s_list_replicasets_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+) -> Result<Json<Vec<K8sReplicaSet>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let replicasets = k8s.list_replicasets(&namespace).await?;
+    Ok(Json(replicasets))
 }

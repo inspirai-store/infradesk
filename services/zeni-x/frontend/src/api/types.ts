@@ -324,6 +324,147 @@ export interface K8sIngressInfo {
   created_at?: string
 }
 
+/**
+ * K8s Pod detailed information
+ */
+export interface K8sPodDetail {
+  name: string
+  namespace: string
+  status: string
+  phase: string
+  node?: string
+  ip?: string
+  host_ip?: string
+  start_time?: string
+  containers: K8sContainerInfo[]
+  init_containers: K8sContainerInfo[]
+  conditions: K8sPodCondition[]
+  labels: Record<string, string>
+}
+
+/**
+ * K8s Container information
+ */
+export interface K8sContainerInfo {
+  name: string
+  image: string
+  image_pull_policy?: string
+  ports: K8sContainerPort[]
+  env: K8sEnvVar[]
+  resources?: K8sResourceRequirements
+  state: string
+  ready: boolean
+  restart_count: number
+}
+
+/**
+ * K8s Container port
+ */
+export interface K8sContainerPort {
+  name?: string
+  container_port: number
+  protocol: string
+}
+
+/**
+ * K8s Environment variable
+ */
+export interface K8sEnvVar {
+  name: string
+  value?: string
+  value_from?: string
+}
+
+/**
+ * K8s Resource requirements
+ */
+export interface K8sResourceRequirements {
+  cpu_request?: string
+  memory_request?: string
+  cpu_limit?: string
+  memory_limit?: string
+}
+
+/**
+ * K8s Pod condition
+ */
+export interface K8sPodCondition {
+  condition_type: string
+  status: string
+  last_transition_time?: string
+  reason?: string
+  message?: string
+}
+
+// ==================== Extended K8s Workload Types ====================
+
+/**
+ * K8s Job
+ */
+export interface K8sJob {
+  name: string
+  namespace: string
+  completions?: number
+  succeeded: number
+  failed: number
+  active: number
+  start_time?: string
+  completion_time?: string
+  created_at?: string
+}
+
+/**
+ * K8s CronJob
+ */
+export interface K8sCronJob {
+  name: string
+  namespace: string
+  schedule: string
+  suspend: boolean
+  active: number
+  last_schedule_time?: string
+  last_successful_time?: string
+  created_at?: string
+}
+
+/**
+ * K8s StatefulSet
+ */
+export interface K8sStatefulSet {
+  name: string
+  namespace: string
+  replicas: number
+  ready_replicas: number
+  current_replicas: number
+  updated_replicas: number
+  created_at?: string
+}
+
+/**
+ * K8s DaemonSet
+ */
+export interface K8sDaemonSet {
+  name: string
+  namespace: string
+  desired_number_scheduled: number
+  current_number_scheduled: number
+  number_ready: number
+  number_available: number
+  created_at?: string
+}
+
+/**
+ * K8s ReplicaSet
+ */
+export interface K8sReplicaSet {
+  name: string
+  namespace: string
+  replicas: number
+  ready_replicas: number
+  available_replicas: number
+  created_at?: string
+}
+
 // ==================== K8s API Interface ====================
 
 /**
@@ -358,20 +499,51 @@ export interface IK8sApi {
   /** List pods in a namespace */
   listPods(clusterId: number, namespace: string): Promise<K8sPod[]>
 
+  /** Get pod detailed information */
+  getPodDetail(clusterId: number, namespace: string, name: string): Promise<K8sPodDetail>
+
+  /** Get pod logs */
+  getPodLogs(clusterId: number, namespace: string, name: string, container?: string, tailLines?: number): Promise<string>
+
   /** List configmaps in a namespace */
   listConfigMaps(clusterId: number, namespace: string): Promise<K8sConfigMapInfo[]>
 
   /** Get configmap data */
   getConfigMapData(clusterId: number, namespace: string, name: string): Promise<Record<string, string>>
 
+  /** Update configmap data */
+  updateConfigMap(clusterId: number, namespace: string, name: string, data: Record<string, string>): Promise<void>
+
   /** List secrets in a namespace (metadata only) */
   listSecrets(clusterId: number, namespace: string): Promise<K8sSecretInfo[]>
+
+  /** Get secret data (decoded from base64) */
+  getSecretData(clusterId: number, namespace: string, name: string): Promise<Record<string, string>>
+
+  /** Update secret data */
+  updateSecret(clusterId: number, namespace: string, name: string, data: Record<string, string>): Promise<void>
 
   /** List services in a namespace */
   listServices(clusterId: number, namespace: string): Promise<K8sServiceInfo[]>
 
   /** List ingresses in a namespace */
   listIngresses(clusterId: number, namespace: string): Promise<K8sIngressInfo[]>
+
+  // Extended workload types
+  /** List Jobs in a namespace */
+  listJobs(clusterId: number, namespace: string): Promise<K8sJob[]>
+
+  /** List CronJobs in a namespace */
+  listCronJobs(clusterId: number, namespace: string): Promise<K8sCronJob[]>
+
+  /** List StatefulSets in a namespace */
+  listStatefulSets(clusterId: number, namespace: string): Promise<K8sStatefulSet[]>
+
+  /** List DaemonSets in a namespace */
+  listDaemonSets(clusterId: number, namespace: string): Promise<K8sDaemonSet[]>
+
+  /** List ReplicaSets in a namespace */
+  listReplicaSets(clusterId: number, namespace: string): Promise<K8sReplicaSet[]>
 }
 
 // ==================== Settings Types ====================

@@ -351,3 +351,124 @@ pub async fn k8s_list_ingresses(
     let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
     k8s.list_ingresses(&namespace).await
 }
+
+/// Get Secret data (decoded from base64)
+#[tauri::command]
+pub async fn k8s_get_secret_data(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+    name: String,
+) -> Result<HashMap<String, String>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.get_secret_data(&namespace, &name).await
+}
+
+/// Update Secret data
+#[tauri::command]
+pub async fn k8s_update_secret(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+    name: String,
+    data: HashMap<String, String>,
+) -> Result<(), AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.update_secret(&namespace, &name, data).await
+}
+
+/// Update ConfigMap data
+#[tauri::command]
+pub async fn k8s_update_configmap(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+    name: String,
+    data: HashMap<String, String>,
+) -> Result<(), AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.update_configmap(&namespace, &name, data).await
+}
+
+/// Get Pod detailed information
+#[tauri::command]
+pub async fn k8s_get_pod_detail(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+    name: String,
+) -> Result<crate::db::models::K8sPodDetail, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.get_pod_detail(&namespace, &name).await
+}
+
+/// Get Pod logs
+#[tauri::command]
+pub async fn k8s_get_pod_logs(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+    name: String,
+    container: Option<String>,
+    tail_lines: Option<i64>,
+) -> Result<String, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.get_pod_logs(&namespace, &name, container.as_deref(), tail_lines).await
+}
+
+// ==================== Extended Workload Types ====================
+
+/// List Jobs in a namespace
+#[tauri::command]
+pub async fn k8s_list_jobs(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+) -> Result<Vec<crate::db::models::K8sJob>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_jobs(&namespace).await
+}
+
+/// List CronJobs in a namespace
+#[tauri::command]
+pub async fn k8s_list_cronjobs(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+) -> Result<Vec<crate::db::models::K8sCronJob>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_cronjobs(&namespace).await
+}
+
+/// List StatefulSets in a namespace
+#[tauri::command]
+pub async fn k8s_list_statefulsets(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+) -> Result<Vec<crate::db::models::K8sStatefulSet>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_statefulsets(&namespace).await
+}
+
+/// List DaemonSets in a namespace
+#[tauri::command]
+pub async fn k8s_list_daemonsets(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+) -> Result<Vec<crate::db::models::K8sDaemonSet>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_daemonsets(&namespace).await
+}
+
+/// List ReplicaSets in a namespace
+#[tauri::command]
+pub async fn k8s_list_replicasets(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+) -> Result<Vec<crate::db::models::K8sReplicaSet>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_replicasets(&namespace).await
+}

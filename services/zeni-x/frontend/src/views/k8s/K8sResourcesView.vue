@@ -29,6 +29,7 @@ import { useRouter } from 'vue-router'
 import { api } from '@/api/adapter'
 import type { Cluster } from '@/api'
 import WorkloadPanel from './components/WorkloadPanel.vue'
+import PodPanel from './components/PodPanel.vue'
 import ConfigPanel from './components/ConfigPanel.vue'
 import NetworkPanel from './components/NetworkPanel.vue'
 
@@ -390,6 +391,12 @@ watch(selectedClusterId, () => {
           <NTabs v-model:value="activeTab" type="line" animated>
             <NTabPane name="workload" tab="Workload">
               <WorkloadPanel
+                :cluster-id="selectedClusterId"
+                :namespace="selectedNamespace"
+              />
+            </NTabPane>
+            <NTabPane name="pods" tab="Pods">
+              <PodPanel
                 :cluster-id="selectedClusterId"
                 :namespace="selectedNamespace"
               />

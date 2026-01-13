@@ -14,8 +14,9 @@ use kube::{
 use std::collections::HashMap;
 
 use crate::db::models::{
-    DiscoveredService, K8sConfigMapInfo, K8sDeployment, K8sIngressInfo, K8sPod, K8sSecretInfo,
-    K8sServiceInfo, ListClustersResponse,
+    DiscoveredService, K8sConfigMapInfo, K8sCronJob, K8sDaemonSet, K8sDeployment, K8sIngressInfo,
+    K8sJob, K8sPod, K8sPodDetail, K8sReplicaSet, K8sSecretInfo, K8sServiceInfo, K8sStatefulSet,
+    ListClustersResponse,
 };
 use crate::error::{AppError, AppResult};
 
@@ -542,6 +543,459 @@ impl K8sService {
                     hosts,
                     address,
                     created_at: ing.metadata.creation_timestamp.map(|t| t.0.to_rfc3339()),
+                }
+            })
+            .collect())
+    }
+
+    /// Get Secret data (decoded from base64)
+    pub async fn get_secret_data(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> AppResult<HashMap<String, String>> {
+        let secrets: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
+        let secret = secrets
+            .get(name)
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to get secret: {}", e)))?;
+
+        // Decode base64 values
+        let mut result = HashMap::new();
+        if let Some(data) = secret.data {
+            for (key, value) in data {
+                let bytes = value.0;
+                let decoded = String::from_utf8(bytes.clone())
+                    .unwrap_or_else(|_| BASE64.encode(&bytes));
+                result.insert(key, decoded);
+            }
+        }
+        Ok(result)
+    }
+
+    /// Update Secret data
+    pub async fn update_secret(
+        &self,
+        namespace: &str,
+        name: &str,
+        data: HashMap<String, String>,
+    ) -> AppResult<()> {
+        use k8s_openapi::ByteString;
+        use kube::api::Patch;
+
+        let secrets: Api<Secret> = Api::namespaced(self.client.clone(), namespace);
+
+        // Encode values to base64
+        let encoded_data: std::collections::BTreeMap<String, ByteString> = data
+            .into_iter()
+            .map(|(k, v)| (k, ByteString(v.into_bytes())))
+            .collect();
+
+        // Create patch
+        let patch = serde_json::json!({
+            "data": encoded_data
+        });
+
+        secrets
+            .patch(name, &kube::api::PatchParams::default(), &Patch::Merge(&patch))
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to update secret: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Update ConfigMap data
+    pub async fn update_configmap(
+        &self,
+        namespace: &str,
+        name: &str,
+        data: HashMap<String, String>,
+    ) -> AppResult<()> {
+        use kube::api::Patch;
+
+        let configmaps: Api<ConfigMap> = Api::namespaced(self.client.clone(), namespace);
+
+        // Convert to BTreeMap for JSON serialization
+        let data_map: std::collections::BTreeMap<String, String> =
+            data.into_iter().collect();
+
+        // Create patch
+        let patch = serde_json::json!({
+            "data": data_map
+        });
+
+        configmaps
+            .patch(name, &kube::api::PatchParams::default(), &Patch::Merge(&patch))
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to update configmap: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Get Pod detailed information
+    pub async fn get_pod_detail(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> AppResult<K8sPodDetail> {
+        use crate::db::models::{
+            K8sContainerInfo, K8sContainerPort, K8sEnvVar, K8sPodCondition, K8sPodDetail,
+            K8sResourceRequirements,
+        };
+
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), namespace);
+        let pod = pods
+            .get(name)
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to get pod: {}", e)))?;
+
+        let metadata = pod.metadata;
+        let spec = pod.spec.unwrap_or_default();
+        let status = pod.status.unwrap_or_default();
+
+        // Extract container info
+        let containers: Vec<K8sContainerInfo> = spec
+            .containers
+            .iter()
+            .map(|c| {
+                let container_status = status
+                    .container_statuses
+                    .as_ref()
+                    .and_then(|statuses| statuses.iter().find(|s| s.name == c.name));
+
+                let state = container_status
+                    .and_then(|s| s.state.as_ref())
+                    .map(|state| {
+                        if state.running.is_some() {
+                            "running".to_string()
+                        } else if state.waiting.is_some() {
+                            "waiting".to_string()
+                        } else if state.terminated.is_some() {
+                            "terminated".to_string()
+                        } else {
+                            "unknown".to_string()
+                        }
+                    })
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                let ports: Vec<K8sContainerPort> = c
+                    .ports
+                    .as_ref()
+                    .map(|ports| {
+                        ports
+                            .iter()
+                            .map(|p| K8sContainerPort {
+                                name: p.name.clone(),
+                                container_port: p.container_port,
+                                protocol: p.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let env: Vec<K8sEnvVar> = c
+                    .env
+                    .as_ref()
+                    .map(|envs| {
+                        envs.iter()
+                            .map(|e| {
+                                let value_from = e.value_from.as_ref().map(|vf| {
+                                    if vf.config_map_key_ref.is_some() {
+                                        "configMapKeyRef".to_string()
+                                    } else if vf.secret_key_ref.is_some() {
+                                        "secretKeyRef".to_string()
+                                    } else if vf.field_ref.is_some() {
+                                        "fieldRef".to_string()
+                                    } else if vf.resource_field_ref.is_some() {
+                                        "resourceFieldRef".to_string()
+                                    } else {
+                                        "unknown".to_string()
+                                    }
+                                });
+                                K8sEnvVar {
+                                    name: e.name.clone(),
+                                    value: e.value.clone(),
+                                    value_from,
+                                }
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                let resources = c.resources.as_ref().map(|r| K8sResourceRequirements {
+                    cpu_request: r
+                        .requests
+                        .as_ref()
+                        .and_then(|req| req.get("cpu").map(|q| q.0.clone())),
+                    memory_request: r
+                        .requests
+                        .as_ref()
+                        .and_then(|req| req.get("memory").map(|q| q.0.clone())),
+                    cpu_limit: r
+                        .limits
+                        .as_ref()
+                        .and_then(|lim| lim.get("cpu").map(|q| q.0.clone())),
+                    memory_limit: r
+                        .limits
+                        .as_ref()
+                        .and_then(|lim| lim.get("memory").map(|q| q.0.clone())),
+                });
+
+                K8sContainerInfo {
+                    name: c.name.clone(),
+                    image: c.image.clone().unwrap_or_default(),
+                    image_pull_policy: c.image_pull_policy.clone(),
+                    ports,
+                    env,
+                    resources,
+                    state,
+                    ready: container_status.map(|s| s.ready).unwrap_or(false),
+                    restart_count: container_status.map(|s| s.restart_count).unwrap_or(0),
+                }
+            })
+            .collect();
+
+        // Extract init container info
+        let init_containers: Vec<K8sContainerInfo> = spec
+            .init_containers
+            .unwrap_or_default()
+            .iter()
+            .map(|c| {
+                let container_status = status
+                    .init_container_statuses
+                    .as_ref()
+                    .and_then(|statuses| statuses.iter().find(|s| s.name == c.name));
+
+                let state = container_status
+                    .and_then(|s| s.state.as_ref())
+                    .map(|state| {
+                        if state.running.is_some() {
+                            "running".to_string()
+                        } else if state.waiting.is_some() {
+                            "waiting".to_string()
+                        } else if state.terminated.is_some() {
+                            "terminated".to_string()
+                        } else {
+                            "unknown".to_string()
+                        }
+                    })
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                K8sContainerInfo {
+                    name: c.name.clone(),
+                    image: c.image.clone().unwrap_or_default(),
+                    image_pull_policy: c.image_pull_policy.clone(),
+                    ports: vec![],
+                    env: vec![],
+                    resources: None,
+                    state,
+                    ready: container_status.map(|s| s.ready).unwrap_or(false),
+                    restart_count: container_status.map(|s| s.restart_count).unwrap_or(0),
+                }
+            })
+            .collect();
+
+        // Extract conditions
+        let conditions: Vec<K8sPodCondition> = status
+            .conditions
+            .unwrap_or_default()
+            .iter()
+            .map(|c| K8sPodCondition {
+                condition_type: c.type_.clone(),
+                status: c.status.clone(),
+                last_transition_time: c.last_transition_time.as_ref().map(|t| t.0.to_rfc3339()),
+                reason: c.reason.clone(),
+                message: c.message.clone(),
+            })
+            .collect();
+
+        // Determine pod status
+        let pod_status = status.phase.clone().unwrap_or_else(|| "Unknown".to_string());
+
+        Ok(K8sPodDetail {
+            name: metadata.name.unwrap_or_default(),
+            namespace: metadata.namespace.unwrap_or_else(|| namespace.to_string()),
+            status: pod_status.clone(),
+            phase: pod_status,
+            node: spec.node_name,
+            ip: status.pod_ip,
+            host_ip: status.host_ip,
+            start_time: status.start_time.map(|t| t.0.to_rfc3339()),
+            containers,
+            init_containers,
+            conditions,
+            labels: metadata.labels.unwrap_or_default().into_iter().collect(),
+        })
+    }
+
+    /// Get Pod logs
+    pub async fn get_pod_logs(
+        &self,
+        namespace: &str,
+        name: &str,
+        container: Option<&str>,
+        tail_lines: Option<i64>,
+    ) -> AppResult<String> {
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), namespace);
+
+        let mut params = kube::api::LogParams::default();
+        if let Some(c) = container {
+            params.container = Some(c.to_string());
+        }
+        if let Some(lines) = tail_lines {
+            params.tail_lines = Some(lines);
+        }
+
+        let logs = pods
+            .logs(name, &params)
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to get pod logs: {}", e)))?;
+
+        Ok(logs)
+    }
+
+    // ==================== Extended Workload Types ====================
+
+    /// List Jobs in a namespace
+    pub async fn list_jobs(&self, namespace: &str) -> AppResult<Vec<K8sJob>> {
+        use k8s_openapi::api::batch::v1::Job;
+        let jobs: Api<Job> = Api::namespaced(self.client.clone(), namespace);
+        let job_list = jobs
+            .list(&Default::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list jobs: {}", e)))?;
+
+        Ok(job_list
+            .items
+            .into_iter()
+            .map(|job| {
+                let metadata = job.metadata;
+                let status = job.status.unwrap_or_default();
+                K8sJob {
+                    name: metadata.name.unwrap_or_default(),
+                    namespace: metadata.namespace.unwrap_or_default(),
+                    completions: job.spec.as_ref().and_then(|s| s.completions),
+                    succeeded: status.succeeded.unwrap_or(0),
+                    failed: status.failed.unwrap_or(0),
+                    active: status.active.unwrap_or(0),
+                    start_time: status.start_time.map(|t| t.0.to_rfc3339()),
+                    completion_time: status.completion_time.map(|t| t.0.to_rfc3339()),
+                    created_at: metadata.creation_timestamp.map(|t| t.0.to_rfc3339()),
+                }
+            })
+            .collect())
+    }
+
+    /// List CronJobs in a namespace
+    pub async fn list_cronjobs(&self, namespace: &str) -> AppResult<Vec<K8sCronJob>> {
+        use k8s_openapi::api::batch::v1::CronJob;
+        let cronjobs: Api<CronJob> = Api::namespaced(self.client.clone(), namespace);
+        let cronjob_list = cronjobs
+            .list(&Default::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list cronjobs: {}", e)))?;
+
+        Ok(cronjob_list
+            .items
+            .into_iter()
+            .map(|cj| {
+                let metadata = cj.metadata;
+                let spec = cj.spec.unwrap_or_default();
+                let status = cj.status.unwrap_or_default();
+                K8sCronJob {
+                    name: metadata.name.unwrap_or_default(),
+                    namespace: metadata.namespace.unwrap_or_default(),
+                    schedule: spec.schedule,
+                    suspend: spec.suspend.unwrap_or(false),
+                    active: status.active.map(|a| a.len() as i32).unwrap_or(0),
+                    last_schedule_time: status.last_schedule_time.map(|t| t.0.to_rfc3339()),
+                    last_successful_time: status.last_successful_time.map(|t| t.0.to_rfc3339()),
+                    created_at: metadata.creation_timestamp.map(|t| t.0.to_rfc3339()),
+                }
+            })
+            .collect())
+    }
+
+    /// List StatefulSets in a namespace
+    pub async fn list_statefulsets(&self, namespace: &str) -> AppResult<Vec<K8sStatefulSet>> {
+        use k8s_openapi::api::apps::v1::StatefulSet;
+        let statefulsets: Api<StatefulSet> = Api::namespaced(self.client.clone(), namespace);
+        let ss_list = statefulsets
+            .list(&Default::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list statefulsets: {}", e)))?;
+
+        Ok(ss_list
+            .items
+            .into_iter()
+            .map(|ss| {
+                let metadata = ss.metadata;
+                let spec = ss.spec.unwrap_or_default();
+                let status = ss.status.unwrap_or_default();
+                K8sStatefulSet {
+                    name: metadata.name.unwrap_or_default(),
+                    namespace: metadata.namespace.unwrap_or_default(),
+                    replicas: spec.replicas.unwrap_or(0),
+                    ready_replicas: status.ready_replicas.unwrap_or(0),
+                    current_replicas: status.current_replicas.unwrap_or(0),
+                    updated_replicas: status.updated_replicas.unwrap_or(0),
+                    created_at: metadata.creation_timestamp.map(|t| t.0.to_rfc3339()),
+                }
+            })
+            .collect())
+    }
+
+    /// List DaemonSets in a namespace
+    pub async fn list_daemonsets(&self, namespace: &str) -> AppResult<Vec<K8sDaemonSet>> {
+        use k8s_openapi::api::apps::v1::DaemonSet;
+        let daemonsets: Api<DaemonSet> = Api::namespaced(self.client.clone(), namespace);
+        let ds_list = daemonsets
+            .list(&Default::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list daemonsets: {}", e)))?;
+
+        Ok(ds_list
+            .items
+            .into_iter()
+            .map(|ds| {
+                let metadata = ds.metadata;
+                let status = ds.status.unwrap_or_default();
+                K8sDaemonSet {
+                    name: metadata.name.unwrap_or_default(),
+                    namespace: metadata.namespace.unwrap_or_default(),
+                    desired_number_scheduled: status.desired_number_scheduled,
+                    current_number_scheduled: status.current_number_scheduled,
+                    number_ready: status.number_ready,
+                    number_available: status.number_available.unwrap_or(0),
+                    created_at: metadata.creation_timestamp.map(|t| t.0.to_rfc3339()),
+                }
+            })
+            .collect())
+    }
+
+    /// List ReplicaSets in a namespace
+    pub async fn list_replicasets(&self, namespace: &str) -> AppResult<Vec<K8sReplicaSet>> {
+        use k8s_openapi::api::apps::v1::ReplicaSet;
+        let replicasets: Api<ReplicaSet> = Api::namespaced(self.client.clone(), namespace);
+        let rs_list = replicasets
+            .list(&Default::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list replicasets: {}", e)))?;
+
+        Ok(rs_list
+            .items
+            .into_iter()
+            .map(|rs| {
+                let metadata = rs.metadata;
+                let spec = rs.spec.unwrap_or_default();
+                let status = rs.status.unwrap_or_default();
+                K8sReplicaSet {
+                    name: metadata.name.unwrap_or_default(),
+                    namespace: metadata.namespace.unwrap_or_default(),
+                    replicas: spec.replicas.unwrap_or(0),
+                    ready_replicas: status.ready_replicas.unwrap_or(0),
+                    available_replicas: status.available_replicas.unwrap_or(0),
+                    created_at: metadata.creation_timestamp.map(|t| t.0.to_rfc3339()),
                 }
             })
             .collect())

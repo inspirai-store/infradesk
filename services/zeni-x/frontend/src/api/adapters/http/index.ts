@@ -25,6 +25,11 @@ import type {
   K8sSecretInfo,
   K8sServiceInfo,
   K8sIngressInfo,
+  K8sJob,
+  K8sCronJob,
+  K8sStatefulSet,
+  K8sDaemonSet,
+  K8sReplicaSet,
   UserSetting,
   BatchSettingsResponse,
   LLMConfigResponse,
@@ -496,6 +501,24 @@ class HttpK8sApi implements IK8sApi {
     return response.data
   }
 
+  async getPodDetail(clusterId: number, namespace: string, name: string): Promise<import('../../types').K8sPodDetail> {
+    const response = await api.get<import('../../types').K8sPodDetail>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/pods/${name}`
+    )
+    return response.data
+  }
+
+  async getPodLogs(clusterId: number, namespace: string, name: string, container?: string, tailLines?: number): Promise<string> {
+    const params: Record<string, string | number> = {}
+    if (container) params.container = container
+    if (tailLines) params.tail = tailLines
+    const response = await api.get<string>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/pods/${name}/logs`,
+      { params }
+    )
+    return response.data
+  }
+
   async listConfigMaps(clusterId: number, namespace: string): Promise<K8sConfigMapInfo[]> {
     const response = await api.get<K8sConfigMapInfo[]>(
       `/k8s/clusters/${clusterId}/namespaces/${namespace}/configmaps`
@@ -510,11 +533,32 @@ class HttpK8sApi implements IK8sApi {
     return response.data
   }
 
+  async updateConfigMap(clusterId: number, namespace: string, name: string, data: Record<string, string>): Promise<void> {
+    await api.put(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/configmaps/${name}`,
+      { data }
+    )
+  }
+
   async listSecrets(clusterId: number, namespace: string): Promise<K8sSecretInfo[]> {
     const response = await api.get<K8sSecretInfo[]>(
       `/k8s/clusters/${clusterId}/namespaces/${namespace}/secrets`
     )
     return response.data
+  }
+
+  async getSecretData(clusterId: number, namespace: string, name: string): Promise<Record<string, string>> {
+    const response = await api.get<Record<string, string>>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/secrets/${name}`
+    )
+    return response.data
+  }
+
+  async updateSecret(clusterId: number, namespace: string, name: string, data: Record<string, string>): Promise<void> {
+    await api.put(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/secrets/${name}`,
+      { data }
+    )
   }
 
   async listServices(clusterId: number, namespace: string): Promise<K8sServiceInfo[]> {
@@ -527,6 +571,42 @@ class HttpK8sApi implements IK8sApi {
   async listIngresses(clusterId: number, namespace: string): Promise<K8sIngressInfo[]> {
     const response = await api.get<K8sIngressInfo[]>(
       `/k8s/clusters/${clusterId}/namespaces/${namespace}/ingresses`
+    )
+    return response.data
+  }
+
+  // Extended workload types
+  async listJobs(clusterId: number, namespace: string): Promise<K8sJob[]> {
+    const response = await api.get<K8sJob[]>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/jobs`
+    )
+    return response.data
+  }
+
+  async listCronJobs(clusterId: number, namespace: string): Promise<K8sCronJob[]> {
+    const response = await api.get<K8sCronJob[]>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/cronjobs`
+    )
+    return response.data
+  }
+
+  async listStatefulSets(clusterId: number, namespace: string): Promise<K8sStatefulSet[]> {
+    const response = await api.get<K8sStatefulSet[]>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/statefulsets`
+    )
+    return response.data
+  }
+
+  async listDaemonSets(clusterId: number, namespace: string): Promise<K8sDaemonSet[]> {
+    const response = await api.get<K8sDaemonSet[]>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/daemonsets`
+    )
+    return response.data
+  }
+
+  async listReplicaSets(clusterId: number, namespace: string): Promise<K8sReplicaSet[]> {
+    const response = await api.get<K8sReplicaSet[]>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/replicasets`
     )
     return response.data
   }

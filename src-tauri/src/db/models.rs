@@ -100,6 +100,101 @@ impl TestConnectionResult {
     }
 }
 
+/// Request to update a connection (partial update support)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateConnectionRequest {
+    /// Display name for the connection
+    pub name: Option<String>,
+
+    /// Connection type: mysql, redis, mongodb, minio
+    #[serde(rename = "type")]
+    pub conn_type: Option<String>,
+
+    /// Database host address
+    pub host: Option<String>,
+
+    /// Database port
+    pub port: Option<i32>,
+
+    /// Username for authentication
+    pub username: Option<String>,
+
+    /// Password for authentication
+    pub password: Option<String>,
+
+    /// Default database name (for MySQL/MongoDB)
+    pub database_name: Option<String>,
+
+    /// Whether this is the default connection for its type
+    pub is_default: Option<bool>,
+
+    /// Connection source: local, k8s
+    pub source: Option<String>,
+
+    /// Kubernetes namespace (for k8s connections)
+    pub k8s_namespace: Option<String>,
+
+    /// Kubernetes service name (for k8s connections)
+    pub k8s_service_name: Option<String>,
+
+    /// Kubernetes service port (for k8s connections)
+    pub k8s_service_port: Option<i32>,
+
+    /// Cluster ID this connection belongs to
+    pub cluster_id: Option<i64>,
+
+    /// Local port for port forwarding
+    pub forward_local_port: Option<i32>,
+}
+
+/// Request to test a connection (no name required)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TestConnectionRequest {
+    /// Connection type: mysql, redis
+    #[serde(rename = "type")]
+    pub conn_type: String,
+
+    /// Database host address
+    pub host: String,
+
+    /// Database port
+    pub port: i32,
+
+    /// Username for authentication
+    pub username: Option<String>,
+
+    /// Password for authentication
+    pub password: Option<String>,
+
+    /// Default database name (for MySQL)
+    pub database_name: Option<String>,
+}
+
+impl TestConnectionRequest {
+    /// Convert to Connection for testing
+    pub fn to_connection(&self) -> Connection {
+        Connection {
+            id: None,
+            name: String::new(), // Not needed for testing
+            conn_type: self.conn_type.clone(),
+            host: self.host.clone(),
+            port: self.port,
+            username: self.username.clone(),
+            password: self.password.clone(),
+            database_name: self.database_name.clone(),
+            is_default: false,
+            source: None,
+            k8s_namespace: None,
+            k8s_service_name: None,
+            k8s_service_port: None,
+            cluster_id: None,
+            forward_local_port: None,
+            created_at: None,
+            updated_at: None,
+        }
+    }
+}
+
 /// Request to test a K8s connection
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TestK8sConnectionRequest {
@@ -672,6 +767,209 @@ pub struct K8sIngressInfo {
     pub namespace: String,
     pub hosts: Vec<String>,
     pub address: Option<String>,
+    pub created_at: Option<String>,
+}
+
+/// K8s Pod detailed information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sPodDetail {
+    /// Pod name
+    pub name: String,
+    /// Namespace
+    pub namespace: String,
+    /// Pod status (Running, Pending, etc.)
+    pub status: String,
+    /// Pod phase
+    pub phase: String,
+    /// Node name
+    pub node: Option<String>,
+    /// Pod IP
+    pub ip: Option<String>,
+    /// Host IP
+    pub host_ip: Option<String>,
+    /// Start time
+    pub start_time: Option<String>,
+    /// Container info list
+    pub containers: Vec<K8sContainerInfo>,
+    /// Init container info list
+    pub init_containers: Vec<K8sContainerInfo>,
+    /// Pod conditions
+    pub conditions: Vec<K8sPodCondition>,
+    /// Labels
+    pub labels: std::collections::HashMap<String, String>,
+}
+
+/// K8s Container information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sContainerInfo {
+    /// Container name
+    pub name: String,
+    /// Container image
+    pub image: String,
+    /// Image pull policy
+    pub image_pull_policy: Option<String>,
+    /// Container ports
+    pub ports: Vec<K8sContainerPort>,
+    /// Environment variables
+    pub env: Vec<K8sEnvVar>,
+    /// Resource requirements
+    pub resources: Option<K8sResourceRequirements>,
+    /// Container state (running, waiting, terminated)
+    pub state: String,
+    /// Ready status
+    pub ready: bool,
+    /// Restart count
+    pub restart_count: i32,
+}
+
+/// K8s Container port
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sContainerPort {
+    /// Port name
+    pub name: Option<String>,
+    /// Container port number
+    pub container_port: i32,
+    /// Protocol (TCP, UDP)
+    pub protocol: String,
+}
+
+/// K8s Environment variable
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sEnvVar {
+    /// Variable name
+    pub name: String,
+    /// Variable value (if directly set)
+    pub value: Option<String>,
+    /// Value source (configMapKeyRef, secretKeyRef, etc.)
+    pub value_from: Option<String>,
+}
+
+/// K8s Resource requirements
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sResourceRequirements {
+    /// CPU request
+    pub cpu_request: Option<String>,
+    /// Memory request
+    pub memory_request: Option<String>,
+    /// CPU limit
+    pub cpu_limit: Option<String>,
+    /// Memory limit
+    pub memory_limit: Option<String>,
+}
+
+/// K8s Pod condition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sPodCondition {
+    /// Condition type
+    pub condition_type: String,
+    /// Status (True, False, Unknown)
+    pub status: String,
+    /// Last transition time
+    pub last_transition_time: Option<String>,
+    /// Reason
+    pub reason: Option<String>,
+    /// Message
+    pub message: Option<String>,
+}
+
+// ==================== Extended K8s Workload Models ====================
+
+/// K8s Job resource
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sJob {
+    /// Job name
+    pub name: String,
+    /// Namespace
+    pub namespace: String,
+    /// Desired completions
+    pub completions: Option<i32>,
+    /// Number of pods which reached phase Succeeded
+    pub succeeded: i32,
+    /// Number of pods which reached phase Failed
+    pub failed: i32,
+    /// Number of actively running pods
+    pub active: i32,
+    /// Represents time when the job was acknowledged by the job controller
+    pub start_time: Option<String>,
+    /// Represents time when the job was completed
+    pub completion_time: Option<String>,
+    /// Created timestamp
+    pub created_at: Option<String>,
+}
+
+/// K8s CronJob resource
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sCronJob {
+    /// CronJob name
+    pub name: String,
+    /// Namespace
+    pub namespace: String,
+    /// Cron schedule expression
+    pub schedule: String,
+    /// Whether the job is suspended
+    pub suspend: bool,
+    /// Number of active jobs
+    pub active: i32,
+    /// Last time the job was scheduled
+    pub last_schedule_time: Option<String>,
+    /// Last time the job was successfully scheduled
+    pub last_successful_time: Option<String>,
+    /// Created timestamp
+    pub created_at: Option<String>,
+}
+
+/// K8s StatefulSet resource
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sStatefulSet {
+    /// StatefulSet name
+    pub name: String,
+    /// Namespace
+    pub namespace: String,
+    /// Desired number of pods
+    pub replicas: i32,
+    /// Total number of pods with ready condition
+    pub ready_replicas: i32,
+    /// Total number of pods created by the controller
+    pub current_replicas: i32,
+    /// Total number of pods with updated template spec
+    pub updated_replicas: i32,
+    /// Created timestamp
+    pub created_at: Option<String>,
+}
+
+/// K8s DaemonSet resource
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sDaemonSet {
+    /// DaemonSet name
+    pub name: String,
+    /// Namespace
+    pub namespace: String,
+    /// Number of nodes that should be running the daemon pod
+    pub desired_number_scheduled: i32,
+    /// Number of nodes that are running the daemon pod
+    pub current_number_scheduled: i32,
+    /// Number of nodes that should be running the daemon pod and have a Ready condition
+    pub number_ready: i32,
+    /// Number of nodes that should be running the daemon pod and have available
+    pub number_available: i32,
+    /// Created timestamp
+    pub created_at: Option<String>,
+}
+
+/// K8s ReplicaSet resource
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sReplicaSet {
+    /// ReplicaSet name
+    pub name: String,
+    /// Namespace
+    pub namespace: String,
+    /// Desired number of replicas
+    pub replicas: i32,
+    /// Number of pods that have labels matching pod template labels
+    pub ready_replicas: i32,
+    /// Number of available replicas
+    pub available_replicas: i32,
+    /// Created timestamp
     pub created_at: Option<String>,
 }
 
