@@ -177,6 +177,21 @@ pub fn run() {
             commands::create_saved_query,
             commands::update_saved_query,
             commands::delete_saved_query,
+            // User settings operations
+            commands::get_all_settings,
+            commands::get_setting,
+            commands::get_settings_batch,
+            commands::set_setting,
+            commands::delete_setting,
+            // LLM config operations
+            commands::get_all_llm_configs,
+            commands::get_llm_config,
+            commands::get_default_llm_config,
+            commands::create_llm_config,
+            commands::update_llm_config,
+            commands::delete_llm_config,
+            commands::set_default_llm_config,
+            commands::get_llm_api_key,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -12,6 +12,7 @@ use crate::db::models::{
     Cluster, Connection, PortForward,
     QueryHistory, AddQueryHistoryRequest,
     SavedQuery, CreateSavedQueryRequest, UpdateSavedQueryRequest,
+    UserSetting, LLMConfig,
 };
 use crate::error::{AppError, AppResult};
 
@@ -218,6 +219,51 @@ impl SqlitePool {
         sqlx::query(
             r#"
             CREATE INDEX IF NOT EXISTS idx_saved_queries_category ON saved_queries(category)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create user_settings table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS user_settings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT NOT NULL UNIQUE,
+                value TEXT NOT NULL,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create llm_configs table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS llm_configs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                api_key_encrypted TEXT,
+                base_url TEXT,
+                model TEXT NOT NULL,
+                max_tokens INTEGER DEFAULT 2000,
+                temperature REAL DEFAULT 0.7,
+                is_default INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create index on llm_configs is_default
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_llm_configs_default ON llm_configs(is_default)
             "#,
         )
         .execute(&self.pool)
@@ -866,6 +912,229 @@ impl SqlitePool {
             .bind(id)
             .execute(&self.pool)
             .await?;
+
+        Ok(())
+    }
+
+    // ==================== User Settings Operations ====================
+
+    /// Get all user settings
+    pub async fn get_all_settings(&self) -> AppResult<Vec<UserSetting>> {
+        let settings = sqlx::query_as::<_, UserSetting>(
+            r#"
+            SELECT id, key, value, created_at, updated_at
+            FROM user_settings
+            ORDER BY key
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(settings)
+    }
+
+    /// Get a setting by key
+    pub async fn get_setting(&self, key: &str) -> AppResult<Option<UserSetting>> {
+        let setting = sqlx::query_as::<_, UserSetting>(
+            r#"
+            SELECT id, key, value, created_at, updated_at
+            FROM user_settings
+            WHERE key = ?
+            "#,
+        )
+        .bind(key)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(setting)
+    }
+
+    /// Get multiple settings by keys
+    pub async fn get_settings_by_keys(&self, keys: &[String]) -> AppResult<Vec<UserSetting>> {
+        if keys.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let placeholders = keys.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
+        let query_str = format!(
+            r#"
+            SELECT id, key, value, created_at, updated_at
+            FROM user_settings
+            WHERE key IN ({})
+            "#,
+            placeholders
+        );
+
+        let mut builder = sqlx::query_as::<_, UserSetting>(&query_str);
+        for key in keys {
+            builder = builder.bind(key);
+        }
+
+        let settings = builder.fetch_all(&self.pool).await?;
+        Ok(settings)
+    }
+
+    /// Upsert a setting (insert or update)
+    pub async fn upsert_setting(&self, key: &str, value: &str) -> AppResult<UserSetting> {
+        sqlx::query(
+            r#"
+            INSERT INTO user_settings (key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key) DO UPDATE SET
+                value = excluded.value,
+                updated_at = CURRENT_TIMESTAMP
+            "#,
+        )
+        .bind(key)
+        .bind(value)
+        .execute(&self.pool)
+        .await?;
+
+        // Fetch the upserted setting
+        let setting = self.get_setting(key).await?.ok_or_else(|| {
+            AppError::NotFound(format!("Setting {} not found after upsert", key))
+        })?;
+
+        Ok(setting)
+    }
+
+    /// Delete a setting
+    pub async fn delete_setting(&self, key: &str) -> AppResult<()> {
+        sqlx::query("DELETE FROM user_settings WHERE key = ?")
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
+
+    // ==================== LLM Config Operations ====================
+
+    /// Get all LLM configs
+    pub async fn get_all_llm_configs(&self) -> AppResult<Vec<LLMConfig>> {
+        let configs = sqlx::query_as::<_, LLMConfig>(
+            r#"
+            SELECT id, name, provider, api_key_encrypted, base_url, model,
+                   max_tokens, temperature, is_default, created_at, updated_at
+            FROM llm_configs
+            ORDER BY name
+            "#,
+        )
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(configs)
+    }
+
+    /// Get LLM config by ID
+    pub async fn get_llm_config(&self, id: i64) -> AppResult<LLMConfig> {
+        let config = sqlx::query_as::<_, LLMConfig>(
+            r#"
+            SELECT id, name, provider, api_key_encrypted, base_url, model,
+                   max_tokens, temperature, is_default, created_at, updated_at
+            FROM llm_configs
+            WHERE id = ?
+            "#,
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(config)
+    }
+
+    /// Get default LLM config
+    pub async fn get_default_llm_config(&self) -> AppResult<Option<LLMConfig>> {
+        let config = sqlx::query_as::<_, LLMConfig>(
+            r#"
+            SELECT id, name, provider, api_key_encrypted, base_url, model,
+                   max_tokens, temperature, is_default, created_at, updated_at
+            FROM llm_configs
+            WHERE is_default = 1
+            LIMIT 1
+            "#,
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(config)
+    }
+
+    /// Create a new LLM config
+    pub async fn create_llm_config(&self, config: &LLMConfig) -> AppResult<LLMConfig> {
+        // If this config is set as default, unset all other defaults
+        if config.is_default {
+            sqlx::query("UPDATE llm_configs SET is_default = 0")
+                .execute(&self.pool)
+                .await?;
+        }
+
+        let result = sqlx::query(
+            r#"
+            INSERT INTO llm_configs (name, provider, api_key_encrypted, base_url, model,
+                                     max_tokens, temperature, is_default)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&config.name)
+        .bind(&config.provider)
+        .bind(&config.api_key_encrypted)
+        .bind(&config.base_url)
+        .bind(&config.model)
+        .bind(config.max_tokens)
+        .bind(config.temperature)
+        .bind(config.is_default)
+        .execute(&self.pool)
+        .await?;
+
+        let id = result.last_insert_rowid();
+        self.get_llm_config(id).await
+    }
+
+    /// Update an existing LLM config
+    pub async fn update_llm_config(&self, id: i64, config: &LLMConfig) -> AppResult<LLMConfig> {
+        // If this config is set as default, unset all other defaults
+        if config.is_default {
+            sqlx::query("UPDATE llm_configs SET is_default = 0 WHERE id != ?")
+                .bind(id)
+                .execute(&self.pool)
+                .await?;
+        }
+
+        sqlx::query(
+            r#"
+            UPDATE llm_configs
+            SET name = ?, provider = ?, api_key_encrypted = ?, base_url = ?,
+                model = ?, max_tokens = ?, temperature = ?, is_default = ?,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = ?
+            "#,
+        )
+        .bind(&config.name)
+        .bind(&config.provider)
+        .bind(&config.api_key_encrypted)
+        .bind(&config.base_url)
+        .bind(&config.model)
+        .bind(config.max_tokens)
+        .bind(config.temperature)
+        .bind(config.is_default)
+        .bind(id)
+        .execute(&self.pool)
+        .await?;
+
+        self.get_llm_config(id).await
+    }
+
+    /// Delete an LLM config
+    pub async fn delete_llm_config(&self, id: i64) -> AppResult<()> {
+        let result = sqlx::query("DELETE FROM llm_configs WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!("LLM config {} not found", id)));
+        }
 
         Ok(())
     }

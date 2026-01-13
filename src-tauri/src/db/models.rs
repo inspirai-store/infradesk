@@ -674,3 +674,154 @@ pub struct K8sIngressInfo {
     pub address: Option<String>,
     pub created_at: Option<String>,
 }
+
+// ==================== User Settings Models ====================
+
+/// User setting entry (key-value store)
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, Default)]
+pub struct UserSetting {
+    /// Unique identifier
+    pub id: Option<i64>,
+
+    /// Setting key (unique)
+    pub key: String,
+
+    /// Setting value (JSON string)
+    pub value: String,
+
+    /// Creation timestamp
+    pub created_at: Option<String>,
+
+    /// Last update timestamp
+    pub updated_at: Option<String>,
+}
+
+/// Create or update setting request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpsertSettingRequest {
+    pub key: String,
+    pub value: serde_json::Value,
+}
+
+/// Batch get settings request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchGetSettingsRequest {
+    pub keys: Vec<String>,
+}
+
+/// Batch settings response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSettingsResponse {
+    pub settings: std::collections::HashMap<String, serde_json::Value>,
+}
+
+// ==================== LLM Config Models ====================
+
+/// LLM configuration entry
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, Default)]
+pub struct LLMConfig {
+    /// Unique identifier
+    pub id: Option<i64>,
+
+    /// Display name for the config
+    pub name: String,
+
+    /// Provider: openai, anthropic, custom
+    pub provider: String,
+
+    /// Encrypted API key (stored encrypted, not returned in responses)
+    #[serde(skip_serializing)]
+    pub api_key_encrypted: Option<String>,
+
+    /// Custom base URL for API calls
+    pub base_url: Option<String>,
+
+    /// Model name (e.g., gpt-4, claude-3-opus)
+    pub model: String,
+
+    /// Maximum tokens for responses
+    #[serde(default = "default_max_tokens")]
+    pub max_tokens: i32,
+
+    /// Temperature for response randomness
+    #[serde(default = "default_temperature")]
+    pub temperature: f64,
+
+    /// Whether this is the default config
+    #[serde(default)]
+    pub is_default: bool,
+
+    /// Creation timestamp
+    pub created_at: Option<String>,
+
+    /// Last update timestamp
+    pub updated_at: Option<String>,
+}
+
+fn default_max_tokens() -> i32 {
+    2000
+}
+
+fn default_temperature() -> f64 {
+    0.7
+}
+
+/// Create LLM config request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateLLMConfigRequest {
+    pub name: String,
+    pub provider: String,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub model: String,
+    pub max_tokens: Option<i32>,
+    pub temperature: Option<f64>,
+    pub is_default: Option<bool>,
+}
+
+/// Update LLM config request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateLLMConfigRequest {
+    pub name: Option<String>,
+    pub provider: Option<String>,
+    pub api_key: Option<String>,
+    pub base_url: Option<String>,
+    pub model: Option<String>,
+    pub max_tokens: Option<i32>,
+    pub temperature: Option<f64>,
+    pub is_default: Option<bool>,
+}
+
+/// LLM config response (with masked API key indicator)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LLMConfigResponse {
+    pub id: i64,
+    pub name: String,
+    pub provider: String,
+    pub has_api_key: bool,
+    pub base_url: Option<String>,
+    pub model: String,
+    pub max_tokens: i32,
+    pub temperature: f64,
+    pub is_default: bool,
+    pub created_at: Option<String>,
+    pub updated_at: Option<String>,
+}
+
+impl From<LLMConfig> for LLMConfigResponse {
+    fn from(config: LLMConfig) -> Self {
+        Self {
+            id: config.id.unwrap_or(0),
+            name: config.name,
+            provider: config.provider,
+            has_api_key: config.api_key_encrypted.is_some(),
+            base_url: config.base_url,
+            model: config.model,
+            max_tokens: config.max_tokens,
+            temperature: config.temperature,
+            is_default: config.is_default,
+            created_at: config.created_at,
+            updated_at: config.updated_at,
+        }
+    }
+}

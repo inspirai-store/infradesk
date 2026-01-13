@@ -1,6 +1,10 @@
 import { defineStore } from 'pinia'
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { connectionApi, setActiveConnectionId, type Connection } from '@/api'
+import { getApiAdapter } from '@/api/adapter'
+
+// Settings key for active connections
+const ACTIVE_CONNECTIONS_KEY = 'active_connections'
 
 export const useConnectionsStore = defineStore('connections', () => {
   // State
@@ -13,25 +17,26 @@ export const useConnectionsStore = defineStore('connections', () => {
   })
   const loading = ref(false)
   const error = ref<string | null>(null)
+  const initialized = ref(false)
 
   // Getters
-  const mysqlConnections = computed(() => 
+  const mysqlConnections = computed(() =>
     connections.value.filter(c => c.type === 'mysql')
   )
-  
-  const redisConnections = computed(() => 
+
+  const redisConnections = computed(() =>
     connections.value.filter(c => c.type === 'redis')
   )
-  
-  const mongodbConnections = computed(() => 
+
+  const mongodbConnections = computed(() =>
     connections.value.filter(c => c.type === 'mongodb')
   )
-  
-  const minioConnections = computed(() => 
+
+  const minioConnections = computed(() =>
     connections.value.filter(c => c.type === 'minio')
   )
 
-  const getConnectionsByType = (type: string) => 
+  const getConnectionsByType = (type: string) =>
     connections.value.filter(c => c.type === type)
 
   const getActiveConnection = (type: string): Connection | null => {
@@ -52,7 +57,7 @@ export const useConnectionsStore = defineStore('connections', () => {
       const data = await connectionApi.getAll()
       // Ensure we always have an array
       connections.value = Array.isArray(data) ? data : []
-      
+
       // Auto-select default connections or first available for each type
       for (const type of ['mysql', 'redis', 'mongodb', 'minio']) {
         if (!activeConnections.value[type]) {
@@ -125,7 +130,7 @@ export const useConnectionsStore = defineStore('connections', () => {
       await connectionApi.delete(id)
       const conn = connections.value.find(c => c.id === id)
       connections.value = connections.value.filter(c => c.id !== id)
-      
+
       // Clear active if deleted
       if (conn && activeConnections.value[conn.type] === id) {
         const remaining = getConnectionsByType(conn.type)
@@ -160,8 +165,49 @@ export const useConnectionsStore = defineStore('connections', () => {
     return activeConnections.value[type]
   }
 
-  // Initialize active connections from localStorage
+  // Load active connections from backend settings
+  async function loadActiveConnections(): Promise<void> {
+    if (initialized.value) return
+
+    try {
+      const api = getApiAdapter()
+      const saved = await api.settings.get(ACTIVE_CONNECTIONS_KEY)
+      if (saved && typeof saved === 'object') {
+        const parsed = saved as Record<string, number | null>
+        for (const [type, id] of Object.entries(parsed)) {
+          if (typeof id === 'number') {
+            activeConnections.value[type] = id
+            setActiveConnectionId(type, id)
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Failed to load active connections:', e)
+    } finally {
+      initialized.value = true
+    }
+  }
+
+  // Save active connections to backend settings
+  async function saveActiveConnections(): Promise<void> {
+    try {
+      const api = getApiAdapter()
+      await api.settings.set(ACTIVE_CONNECTIONS_KEY, activeConnections.value)
+    } catch (e) {
+      console.error('Failed to save active connections:', e)
+    }
+  }
+
+  // Watch for changes and auto-save
+  watch(activeConnections, () => {
+    if (initialized.value) {
+      saveActiveConnections()
+    }
+  }, { deep: true })
+
+  // Legacy compatibility methods (deprecated, use loadActiveConnections instead)
   function initFromStorage() {
+    // For backward compatibility, try localStorage first, then migrate to backend
     try {
       const stored = localStorage.getItem('zeni-x-active-connections')
       if (stored) {
@@ -172,20 +218,26 @@ export const useConnectionsStore = defineStore('connections', () => {
             setActiveConnectionId(type, id)
           }
         }
+        // Migrate to backend and clear localStorage
+        saveActiveConnections().then(() => {
+          localStorage.removeItem('zeni-x-active-connections')
+        })
       }
     } catch {
       // Ignore parse errors
     }
   }
 
-  // Save active connections to localStorage
+  // Legacy compatibility (deprecated)
   function saveToStorage() {
-    try {
-      localStorage.setItem('zeni-x-active-connections', JSON.stringify(activeConnections.value))
-    } catch {
-      // Ignore storage errors
-    }
+    saveActiveConnections()
   }
+
+  // Initialize: load from backend settings
+  loadActiveConnections().then(() => {
+    // Also check localStorage for migration
+    initFromStorage()
+  })
 
   return {
     // State
@@ -193,7 +245,8 @@ export const useConnectionsStore = defineStore('connections', () => {
     activeConnections,
     loading,
     error,
-    
+    initialized,
+
     // Getters
     mysqlConnections,
     redisConnections,
@@ -203,7 +256,7 @@ export const useConnectionsStore = defineStore('connections', () => {
     getActiveConnection,
     hasActiveConnection,
     getActiveConnectionId,
-    
+
     // Actions
     fetchConnections,
     fetchConnectionsByType,
@@ -212,8 +265,11 @@ export const useConnectionsStore = defineStore('connections', () => {
     deleteConnection,
     testConnection,
     setActiveConnection,
+    loadActiveConnections,
+    saveActiveConnections,
+
+    // Legacy compatibility (deprecated)
     initFromStorage,
     saveToStorage,
   }
 })
-

@@ -374,6 +374,133 @@ export interface IK8sApi {
   listIngresses(clusterId: number, namespace: string): Promise<K8sIngressInfo[]>
 }
 
+// ==================== Settings Types ====================
+
+/**
+ * User setting entry
+ */
+export interface UserSetting {
+  id?: number
+  key: string
+  value: string
+  created_at?: string
+  updated_at?: string
+}
+
+/**
+ * Batch get settings request
+ */
+export interface BatchGetSettingsRequest {
+  keys: string[]
+}
+
+/**
+ * Batch settings response
+ */
+export interface BatchSettingsResponse {
+  settings: Record<string, unknown>
+}
+
+// ==================== LLM Config Types ====================
+
+/**
+ * LLM config response (API key is not exposed)
+ */
+export interface LLMConfigResponse {
+  id: number
+  name: string
+  provider: string
+  has_api_key: boolean
+  base_url?: string
+  model: string
+  max_tokens: number
+  temperature: number
+  is_default: boolean
+  created_at?: string
+  updated_at?: string
+}
+
+/**
+ * Create LLM config request
+ */
+export interface CreateLLMConfigRequest {
+  name: string
+  provider: string
+  api_key?: string
+  base_url?: string
+  model: string
+  max_tokens?: number
+  temperature?: number
+  is_default?: boolean
+}
+
+/**
+ * Update LLM config request
+ */
+export interface UpdateLLMConfigRequest {
+  name?: string
+  provider?: string
+  api_key?: string
+  base_url?: string
+  model?: string
+  max_tokens?: number
+  temperature?: number
+  is_default?: boolean
+}
+
+// ==================== Settings API Interface ====================
+
+/**
+ * User settings API interface
+ */
+export interface ISettingsApi {
+  /** Get all settings */
+  getAll(): Promise<UserSetting[]>
+
+  /** Get a setting by key */
+  get(key: string): Promise<unknown | null>
+
+  /** Get multiple settings by keys */
+  getBatch(keys: string[]): Promise<BatchSettingsResponse>
+
+  /** Set a setting (upsert) */
+  set(key: string, value: unknown): Promise<UserSetting>
+
+  /** Delete a setting */
+  delete(key: string): Promise<void>
+}
+
+// ==================== LLM Config API Interface ====================
+
+/**
+ * LLM configuration API interface
+ */
+export interface ILLMConfigApi {
+  /** Get all LLM configs */
+  getAll(): Promise<LLMConfigResponse[]>
+
+  /** Get an LLM config by ID */
+  get(id: number): Promise<LLMConfigResponse>
+
+  /** Get the default LLM config */
+  getDefault(): Promise<LLMConfigResponse | null>
+
+  /** Create a new LLM config */
+  create(data: CreateLLMConfigRequest): Promise<LLMConfigResponse>
+
+  /** Update an LLM config */
+  update(id: number, data: UpdateLLMConfigRequest): Promise<LLMConfigResponse>
+
+  /** Delete an LLM config */
+  delete(id: number): Promise<void>
+
+  /** Set an LLM config as default */
+  setDefault(id: number): Promise<LLMConfigResponse>
+
+  /** Get the API key for a config (for making LLM calls) */
+  getApiKey(id: number): Promise<string | null>
+}
+
 // ==================== Port Forward API Interface ====================
 
 /**
@@ -443,6 +570,12 @@ export interface IApiAdapter {
 
   /** Port forwarding API */
   portForward: IPortForwardApi
+
+  /** User settings API */
+  settings: ISettingsApi
+
+  /** LLM configuration API */
+  llmConfig: ILLMConfigApi
 }
 
 // ==================== API Error ====================

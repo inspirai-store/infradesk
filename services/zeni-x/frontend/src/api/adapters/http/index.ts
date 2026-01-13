@@ -17,12 +17,19 @@ import type {
   ISavedQueryApi,
   IK8sApi,
   IPortForwardApi,
+  ISettingsApi,
+  ILLMConfigApi,
   K8sDeployment,
   K8sPod,
   K8sConfigMapInfo,
   K8sSecretInfo,
   K8sServiceInfo,
   K8sIngressInfo,
+  UserSetting,
+  BatchSettingsResponse,
+  LLMConfigResponse,
+  CreateLLMConfigRequest,
+  UpdateLLMConfigRequest,
 } from '../../types'
 import type {
   Connection,
@@ -578,6 +585,89 @@ class HttpPortForwardApi implements IPortForwardApi {
   }
 }
 
+// ==================== HTTP Settings API ====================
+
+class HttpSettingsApi implements ISettingsApi {
+  async getAll(): Promise<UserSetting[]> {
+    const response = await api.get<UserSetting[]>('/settings')
+    return response.data
+  }
+
+  async get(key: string): Promise<unknown | null> {
+    try {
+      const response = await api.get<{ value: unknown }>(`/settings/${encodeURIComponent(key)}`)
+      return response.data.value
+    } catch {
+      return null
+    }
+  }
+
+  async getBatch(keys: string[]): Promise<BatchSettingsResponse> {
+    const response = await api.post<BatchSettingsResponse>('/settings/batch', { keys })
+    return response.data
+  }
+
+  async set(key: string, value: unknown): Promise<UserSetting> {
+    const response = await api.put<UserSetting>(`/settings/${encodeURIComponent(key)}`, { value })
+    return response.data
+  }
+
+  async delete(key: string): Promise<void> {
+    await api.delete(`/settings/${encodeURIComponent(key)}`)
+  }
+}
+
+// ==================== HTTP LLM Config API ====================
+
+class HttpLLMConfigApi implements ILLMConfigApi {
+  async getAll(): Promise<LLMConfigResponse[]> {
+    const response = await api.get<LLMConfigResponse[]>('/llm-configs')
+    return response.data
+  }
+
+  async get(id: number): Promise<LLMConfigResponse> {
+    const response = await api.get<LLMConfigResponse>(`/llm-configs/${id}`)
+    return response.data
+  }
+
+  async getDefault(): Promise<LLMConfigResponse | null> {
+    try {
+      const response = await api.get<LLMConfigResponse>('/llm-configs/default')
+      return response.data
+    } catch {
+      return null
+    }
+  }
+
+  async create(data: CreateLLMConfigRequest): Promise<LLMConfigResponse> {
+    const response = await api.post<LLMConfigResponse>('/llm-configs', data)
+    return response.data
+  }
+
+  async update(id: number, data: UpdateLLMConfigRequest): Promise<LLMConfigResponse> {
+    const response = await api.put<LLMConfigResponse>(`/llm-configs/${id}`, data)
+    return response.data
+  }
+
+  async delete(id: number): Promise<void> {
+    await api.delete(`/llm-configs/${id}`)
+  }
+
+  async setDefault(id: number): Promise<LLMConfigResponse> {
+    const response = await api.put<LLMConfigResponse>(`/llm-configs/${id}/default`)
+    return response.data
+  }
+
+  async getApiKey(id: number): Promise<string | null> {
+    try {
+      const response = await api.get<{ api_key: string | null }>(`/llm-configs/${id}/api-key`)
+      return response.data.api_key
+    } catch {
+      return null
+    }
+  }
+}
+
 // ==================== HTTP Adapter Factory ====================
 
 /**
@@ -593,6 +683,8 @@ export function createHttpAdapter(): IApiAdapter {
     savedQuery: new HttpSavedQueryApi(),
     k8s: new HttpK8sApi(),
     portForward: new HttpPortForwardApi(),
+    settings: new HttpSettingsApi(),
+    llmConfig: new HttpLLMConfigApi(),
   }
 }
 

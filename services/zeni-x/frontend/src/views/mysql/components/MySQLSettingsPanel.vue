@@ -46,16 +46,20 @@ async function saveSettings() {
   }
 
   isSaving.value = true
-  const success = store.saveQueryLimit(localQueryLimit.value)
+  try {
+    const success = await store.saveQueryLimit(localQueryLimit.value)
 
-  if (success) {
-    message.success('查询限制已更新')
-    emit('update:show', false)
-  } else {
+    if (success) {
+      message.success('查询限制已更新')
+      emit('update:show', false)
+    } else {
+      message.error('保存失败')
+    }
+  } catch (e) {
     message.error('保存失败')
+  } finally {
+    isSaving.value = false
   }
-
-  isSaving.value = false
 }
 
 // 取消

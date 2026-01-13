@@ -75,6 +75,15 @@ pub fn create_router(pool: SqlitePool, pf_service: PortForwardService) -> Router
         .route("/api/k8s/local-kubeconfig", get(k8s_read_local_kubeconfig_http))
         .route("/api/k8s/discover", post(k8s_discover))
         .route("/api/k8s/import", post(k8s_import_connections))
+        // K8s resource listing routes
+        .route("/api/k8s/clusters/:cluster_id/namespaces", get(k8s_list_namespaces_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/deployments", get(k8s_list_deployments_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/pods", get(k8s_list_pods_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/configmaps", get(k8s_list_configmaps_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/configmaps/:name", get(k8s_get_configmap_data_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/secrets", get(k8s_list_secrets_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/services", get(k8s_list_services_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/ingresses", get(k8s_list_ingresses_http))
         // Port forward routes
         .route("/api/port-forward", get(list_port_forwards))
         .route("/api/port-forward/start", post(start_port_forward))
@@ -114,6 +123,21 @@ pub fn create_router(pool: SqlitePool, pf_service: PortForwardService) -> Router
         .route("/api/saved-queries/:id", get(get_saved_query))
         .route("/api/saved-queries/:id", put(update_saved_query))
         .route("/api/saved-queries/:id", delete(delete_saved_query))
+        // Settings routes
+        .route("/api/settings", get(get_all_settings_http))
+        .route("/api/settings/batch", post(get_settings_batch_http))
+        .route("/api/settings/:key", get(get_setting_http))
+        .route("/api/settings/:key", put(set_setting_http))
+        .route("/api/settings/:key", delete(delete_setting_http))
+        // LLM config routes
+        .route("/api/llm-configs", get(get_all_llm_configs_http))
+        .route("/api/llm-configs", post(create_llm_config_http))
+        .route("/api/llm-configs/default", get(get_default_llm_config_http))
+        .route("/api/llm-configs/:id", get(get_llm_config_http))
+        .route("/api/llm-configs/:id", put(update_llm_config_http))
+        .route("/api/llm-configs/:id", delete(delete_llm_config_http))
+        .route("/api/llm-configs/:id/default", put(set_default_llm_config_http))
+        .route("/api/llm-configs/:id/api-key", get(get_llm_api_key_http))
         .layer(cors)
         .with_state(state)
 }
@@ -694,6 +718,94 @@ async fn k8s_import_connections(
     }
 
     Ok(Json(response))
+}
+
+// ==================== K8s Resource Listing handlers ====================
+
+use crate::db::models::{K8sDeployment, K8sPod, K8sConfigMapInfo, K8sSecretInfo, K8sServiceInfo, K8sIngressInfo};
+
+/// Helper to get K8s service from cluster ID
+async fn get_k8s_service_from_cluster(pool: &SqlitePool, cluster_id: i64) -> Result<K8sService, AppError> {
+    let cluster_service = ClusterService::new(pool.clone());
+    let cluster = cluster_service.get_by_id(cluster_id).await?;
+
+    let kubeconfig = cluster.kubeconfig.ok_or_else(|| {
+        AppError::K8s("Cluster has no kubeconfig".to_string())
+    })?;
+
+    K8sService::from_kubeconfig(&kubeconfig, cluster.context.as_deref()).await
+}
+
+async fn k8s_list_namespaces_http(
+    State(state): State<Arc<AppState>>,
+    Path(cluster_id): Path<i64>,
+) -> Result<Json<Vec<String>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let namespaces = k8s.get_namespaces().await?;
+    Ok(Json(namespaces))
+}
+
+async fn k8s_list_deployments_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+) -> Result<Json<Vec<K8sDeployment>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let deployments = k8s.list_deployments(&namespace).await?;
+    Ok(Json(deployments))
+}
+
+async fn k8s_list_pods_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+) -> Result<Json<Vec<K8sPod>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let pods = k8s.list_pods(&namespace).await?;
+    Ok(Json(pods))
+}
+
+async fn k8s_list_configmaps_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+) -> Result<Json<Vec<K8sConfigMapInfo>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let configmaps = k8s.list_configmaps(&namespace).await?;
+    Ok(Json(configmaps))
+}
+
+async fn k8s_get_configmap_data_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace, name)): Path<(i64, String, String)>,
+) -> Result<Json<std::collections::HashMap<String, String>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let data = k8s.get_configmap_data(&namespace, &name).await?;
+    Ok(Json(data))
+}
+
+async fn k8s_list_secrets_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+) -> Result<Json<Vec<K8sSecretInfo>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let secrets = k8s.list_secrets(&namespace).await?;
+    Ok(Json(secrets))
+}
+
+async fn k8s_list_services_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+) -> Result<Json<Vec<K8sServiceInfo>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let services = k8s.list_services_info(&namespace).await?;
+    Ok(Json(services))
+}
+
+async fn k8s_list_ingresses_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+) -> Result<Json<Vec<K8sIngressInfo>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let ingresses = k8s.list_ingresses(&namespace).await?;
+    Ok(Json(ingresses))
 }
 
 // ==================== MySQL handlers ====================
@@ -1377,4 +1489,137 @@ async fn get_port_forward_by_connection(
     let service = state.port_forward_service.read().await;
     let forward = service.get_by_connection(connection_id).await?;
     Ok(Json(forward))
+}
+
+// ==================== Settings handlers ====================
+
+use crate::db::models::{UserSetting, UpsertSettingRequest, BatchGetSettingsRequest, BatchSettingsResponse};
+use crate::db::models::{CreateLLMConfigRequest, UpdateLLMConfigRequest, LLMConfigResponse};
+use crate::services::{SettingsService, LLMConfigService};
+
+async fn get_all_settings_http(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<UserSetting>>, AppError> {
+    let service = SettingsService::new(state.pool.clone());
+    let settings = service.get_all().await?;
+    Ok(Json(settings))
+}
+
+async fn get_setting_http(
+    State(state): State<Arc<AppState>>,
+    Path(key): Path<String>,
+) -> Result<Json<Option<serde_json::Value>>, AppError> {
+    let service = SettingsService::new(state.pool.clone());
+    let value = service.get(&key).await?;
+    Ok(Json(value))
+}
+
+async fn get_settings_batch_http(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<BatchGetSettingsRequest>,
+) -> Result<Json<BatchSettingsResponse>, AppError> {
+    let service = SettingsService::new(state.pool.clone());
+    let settings = service.get_batch(&request.keys).await?;
+    Ok(Json(settings))
+}
+
+#[derive(Deserialize)]
+struct SetSettingBody {
+    value: serde_json::Value,
+}
+
+async fn set_setting_http(
+    State(state): State<Arc<AppState>>,
+    Path(key): Path<String>,
+    Json(body): Json<SetSettingBody>,
+) -> Result<Json<UserSetting>, AppError> {
+    let service = SettingsService::new(state.pool.clone());
+    let request = UpsertSettingRequest {
+        key,
+        value: body.value,
+    };
+    let setting = service.set(&request).await?;
+    Ok(Json(setting))
+}
+
+async fn delete_setting_http(
+    State(state): State<Arc<AppState>>,
+    Path(key): Path<String>,
+) -> Result<StatusCode, AppError> {
+    let service = SettingsService::new(state.pool.clone());
+    service.delete(&key).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ==================== LLM Config handlers ====================
+
+async fn get_all_llm_configs_http(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Vec<LLMConfigResponse>>, AppError> {
+    let service = LLMConfigService::new(state.pool.clone());
+    let configs = service.get_all().await?;
+    Ok(Json(configs))
+}
+
+async fn get_llm_config_http(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<LLMConfigResponse>, AppError> {
+    let service = LLMConfigService::new(state.pool.clone());
+    let config = service.get(id).await?;
+    Ok(Json(config))
+}
+
+async fn get_default_llm_config_http(
+    State(state): State<Arc<AppState>>,
+) -> Result<Json<Option<LLMConfigResponse>>, AppError> {
+    let service = LLMConfigService::new(state.pool.clone());
+    let config = service.get_default().await?;
+    Ok(Json(config))
+}
+
+async fn create_llm_config_http(
+    State(state): State<Arc<AppState>>,
+    Json(data): Json<CreateLLMConfigRequest>,
+) -> Result<Json<LLMConfigResponse>, AppError> {
+    let service = LLMConfigService::new(state.pool.clone());
+    let config = service.create(data).await?;
+    Ok(Json(config))
+}
+
+async fn update_llm_config_http(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(data): Json<UpdateLLMConfigRequest>,
+) -> Result<Json<LLMConfigResponse>, AppError> {
+    let service = LLMConfigService::new(state.pool.clone());
+    let config = service.update(id, data).await?;
+    Ok(Json(config))
+}
+
+async fn delete_llm_config_http(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, AppError> {
+    let service = LLMConfigService::new(state.pool.clone());
+    service.delete(id).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn set_default_llm_config_http(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<LLMConfigResponse>, AppError> {
+    let service = LLMConfigService::new(state.pool.clone());
+    let config = service.set_default(id).await?;
+    Ok(Json(config))
+}
+
+async fn get_llm_api_key_http(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<Option<String>>, AppError> {
+    let service = LLMConfigService::new(state.pool.clone());
+    let api_key = service.get_api_key(id).await?;
+    Ok(Json(api_key))
 }

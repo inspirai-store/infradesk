@@ -94,7 +94,8 @@ const envOptions = [
 async function fetchClusters() {
   loading.value = true
   try {
-    clusters.value = await api.cluster.getAll()
+    const data = await api.cluster.getAll()
+    clusters.value = Array.isArray(data) ? data : []
     if (clusters.value.length > 0 && !selectedClusterId.value) {
       selectedClusterId.value = clusters.value[0].id!
     }
@@ -113,7 +114,8 @@ async function fetchNamespaces() {
 
   namespacesLoading.value = true
   try {
-    namespaces.value = await api.k8s.listNamespaces(selectedClusterId.value)
+    const data = await api.k8s.listNamespaces(selectedClusterId.value)
+    namespaces.value = Array.isArray(data) ? data : []
     if (namespaces.value.length > 0 && !selectedNamespace.value) {
       // Default to 'default' namespace if available
       if (namespaces.value.includes('default')) {
@@ -187,7 +189,7 @@ async function handleLoadLocalConfig() {
   }
 }
 
-async function handleKubeconfigUpload(options: { file: { file: File } }) {
+async function handleKubeconfigUpload(options: { file: { file: File | null } }) {
   const file = options.file.file
   if (!file) return
 

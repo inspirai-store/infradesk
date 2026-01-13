@@ -60,7 +60,7 @@ export class LLMService {
     }
 
     const baseURL = this.store.getBaseURL()
-    const headers = this.store.getHeaders()
+    const headers = await this.store.getHeaders()
 
     let endpoint = ''
     if (this.store.config.provider === 'anthropic') {
@@ -119,7 +119,7 @@ export class LLMService {
     }
 
     const baseURL = this.store.getBaseURL()
-    const headers = this.store.getHeaders()
+    const headers = await this.store.getHeaders()
 
     let endpoint = ''
     let body: any = {}

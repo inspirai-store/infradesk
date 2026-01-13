@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { mysqlApi, type CreateDatabaseRequest, type AlterDatabaseRequest, type GrantPrivilegesRequest, type CreateUserRequest, type UserInfo } from '@/api'
+import { getApiAdapter } from '@/api/adapter'
 
 export interface Database {
   name: string
@@ -47,6 +48,9 @@ export interface ServerInfo {
   connected: boolean
 }
 
+// Settings key for query limit
+const QUERY_LIMIT_KEY = 'mysql_query_limit'
+
 export const useMySQLStore = defineStore('mysql', () => {
   const serverInfo = ref<ServerInfo | null>(null)
   const databases = ref<Database[]>([])
@@ -57,66 +61,100 @@ export const useMySQLStore = defineStore('mysql', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
   const users = ref<UserInfo[]>([])
-  // 记录哪些数据库已经加载过表信息
   const fetchedDatabases = ref<Set<string>>(new Set())
-  // 按数据库缓存表信息
   const tablesCache = ref<Map<string, Table[]>>(new Map())
 
-  // ========== 查询限制功能 ==========
-  const QUERY_LIMIT_STORAGE_KEY = 'mysql-query-limit'
-  const queryLimit = ref<number>(100) // 默认值 100
+  // ========== Query limit feature ==========
+  const queryLimit = ref<number>(100)
+  const queryLimitInitialized = ref(false)
 
-  // 加载查询限制配置
-  function loadQueryLimit(): void {
-    const saved = localStorage.getItem(QUERY_LIMIT_STORAGE_KEY)
-    if (saved) {
-      const parsed = parseInt(saved, 10)
-      if (!isNaN(parsed) && parsed >= 10 && parsed <= 1000) {
-        queryLimit.value = parsed
+  // Load query limit from backend settings
+  async function loadQueryLimit(): Promise<void> {
+    if (queryLimitInitialized.value) return
+
+    try {
+      const api = getApiAdapter()
+      const saved = await api.settings.get(QUERY_LIMIT_KEY)
+      if (saved && typeof saved === 'number' && saved >= 10 && saved <= 1000) {
+        queryLimit.value = saved
       }
+    } catch (e) {
+      console.error('Failed to load query limit:', e)
+    } finally {
+      queryLimitInitialized.value = true
+    }
+
+    // Also check localStorage for migration
+    migrateFromLocalStorage()
+  }
+
+  // Migrate from localStorage (one-time migration)
+  function migrateFromLocalStorage(): void {
+    try {
+      const stored = localStorage.getItem('mysql-query-limit')
+      if (stored) {
+        const parsed = parseInt(stored, 10)
+        if (!isNaN(parsed) && parsed >= 10 && parsed <= 1000) {
+          queryLimit.value = parsed
+          // Migrate to backend and clear localStorage
+          saveQueryLimit(parsed).then(() => {
+            localStorage.removeItem('mysql-query-limit')
+          })
+        }
+      }
+    } catch {
+      // Ignore errors
     }
   }
 
-  // 保存查询限制配置
-  function saveQueryLimit(limit: number): boolean {
+  // Save query limit to backend settings
+  async function saveQueryLimit(limit: number): Promise<boolean> {
     if (limit < 10 || limit > 1000) {
       return false
     }
     queryLimit.value = limit
-    localStorage.setItem(QUERY_LIMIT_STORAGE_KEY, limit.toString())
-    return true
+    try {
+      const api = getApiAdapter()
+      await api.settings.set(QUERY_LIMIT_KEY, limit)
+      return true
+    } catch (e) {
+      console.error('Failed to save query limit:', e)
+      return false
+    }
   }
 
-  // 检查 SQL 是否已经有 LIMIT 子句
-  function hasLimitClause(sql: string): boolean {
-    // 移除字符串字面量和注释，避免误判
-    const cleaned = sql
-      .replace(/--.*$/gm, '') // 移除单行注释
-      .replace(/\/\*[\s\S]*?\*\//g, '') // 移除多行注释
-      .replace(/'.*?'/g, "''") // 简化字符串
-      .replace(/".*?"/g, '""') // 简化双引号字符串
+  // Watch for changes and auto-save
+  watch(queryLimit, (newValue) => {
+    if (queryLimitInitialized.value) {
+      saveQueryLimit(newValue)
+    }
+  })
 
-    // 检查是否有 LIMIT（不区分大小写）
+  // Check if SQL already has LIMIT clause
+  function hasLimitClause(sql: string): boolean {
+    const cleaned = sql
+      .replace(/--.*$/gm, '')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/'.*?'/g, "''")
+      .replace(/".*?"/g, '""')
+
     return /\bLIMIT\s+\d+/i.test(cleaned)
   }
 
-  // 应用查询限制到 SQL
+  // Apply query limit to SQL
   function applyLimit(sql: string, limit?: number): string {
     const limitValue = limit ?? queryLimit.value
 
-    // 如果已经有 LIMIT，不修改
     if (hasLimitClause(sql)) {
       return sql
     }
 
     const trimmed = sql.trim()
 
-    // 只对 SELECT 语句添加 LIMIT
     if (!/^\s*(SELECT|WITH)/i.test(trimmed)) {
       return sql
     }
 
-    // 移除末尾的分号
     let baseSql = trimmed
     if (baseSql.endsWith(';')) {
       baseSql = baseSql.slice(0, -1).trim()
@@ -125,17 +163,14 @@ export const useMySQLStore = defineStore('mysql', () => {
     return `${baseSql} LIMIT ${limitValue}`
   }
 
-  // 提取基础查询（移除 LIMIT 和 OFFSET）
+  // Extract base query (remove LIMIT and OFFSET)
   function extractBaseQuery(sql: string): string {
     let cleaned = sql.trim()
 
-    // 移除末尾的分号
     if (cleaned.endsWith(';')) {
       cleaned = cleaned.slice(0, -1).trim()
     }
 
-    // 移除 LIMIT 和 OFFSET 子句
-    // 正则匹配: LIMIT 数字 [OFFSET 数字] 或 OFFSET 数字 LIMIT 数字
     cleaned = cleaned.replace(
       /\s+(LIMIT\s+\d+)(?:\s+(OFFSET\s+\d+))?(?=\s*(?:;|$))/gi,
       ''
@@ -148,7 +183,7 @@ export const useMySQLStore = defineStore('mysql', () => {
     return cleaned.trim()
   }
 
-  // 初始化时加载配置
+  // Initialize: load query limit from backend
   loadQueryLimit()
 
   async function fetchServerInfo() {
@@ -184,7 +219,6 @@ export const useMySQLStore = defineStore('mysql', () => {
   async function alterDatabase(name: string, req: AlterDatabaseRequest) {
     try {
       await mysqlApi.alterDatabase(name, req)
-      // 不需要刷新列表，因为只修改属性
     } catch (e) {
       throw e
     }
@@ -193,7 +227,6 @@ export const useMySQLStore = defineStore('mysql', () => {
   async function grantPrivileges(database: string, req: GrantPrivilegesRequest) {
     try {
       await mysqlApi.grantPrivileges(database, req)
-      // 不需要刷新列表
     } catch (e) {
       throw e
     }
@@ -230,7 +263,6 @@ export const useMySQLStore = defineStore('mysql', () => {
   }
 
   async function fetchTables(database: string, forceRefresh = false) {
-    // 如果已经加载过且不是强制刷新，使用缓存
     if (!forceRefresh && fetchedDatabases.value.has(database)) {
       currentDatabase.value = database
       tables.value = tablesCache.value.get(database) || []
@@ -243,7 +275,6 @@ export const useMySQLStore = defineStore('mysql', () => {
       const data = await mysqlApi.listTables(database) as Table[]
       const tableList = data || []
       tables.value = tableList
-      // 缓存结果
       fetchedDatabases.value.add(database)
       tablesCache.value.set(database, tableList)
     } catch (e) {
@@ -253,12 +284,10 @@ export const useMySQLStore = defineStore('mysql', () => {
     }
   }
 
-  // 检查数据库是否已加载过表信息
   function hasFetchedTables(database: string): boolean {
     return fetchedDatabases.value.has(database)
   }
 
-  // 获取指定数据库的缓存表列表
   function getTablesForDatabase(database: string): Table[] {
     return tablesCache.value.get(database) || []
   }
@@ -325,4 +354,3 @@ export const useMySQLStore = defineStore('mysql', () => {
     extractBaseQuery,
   }
 })
-

@@ -73,5 +73,12 @@ impl From<anyhow::Error> for AppError {
     }
 }
 
+// Convert from serde_json errors
+impl From<serde_json::Error> for AppError {
+    fn from(err: serde_json::Error) -> Self {
+        AppError::Validation(err.to_string())
+    }
+}
+
 /// Result type alias for AppError
 pub type AppResult<T> = Result<T, AppError>;

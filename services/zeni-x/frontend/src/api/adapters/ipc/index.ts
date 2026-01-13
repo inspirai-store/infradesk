@@ -16,6 +16,8 @@ import type {
   ISavedQueryApi,
   IK8sApi,
   IPortForwardApi,
+  ISettingsApi,
+  ILLMConfigApi,
   ApiError,
   K8sDeployment,
   K8sPod,
@@ -23,6 +25,11 @@ import type {
   K8sSecretInfo,
   K8sServiceInfo,
   K8sIngressInfo,
+  UserSetting,
+  BatchSettingsResponse,
+  LLMConfigResponse,
+  CreateLLMConfigRequest,
+  UpdateLLMConfigRequest,
 } from '../../types'
 import type {
   Connection,
@@ -788,6 +795,118 @@ class IpcPortForwardApi implements IPortForwardApi {
   }
 }
 
+// ==================== IPC Settings API ====================
+
+class IpcSettingsApi implements ISettingsApi {
+  async getAll(): Promise<UserSetting[]> {
+    try {
+      return await invoke<UserSetting[]>('get_all_settings')
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async get(key: string): Promise<unknown | null> {
+    try {
+      return await invoke<unknown | null>('get_setting', { key })
+    } catch {
+      return null
+    }
+  }
+
+  async getBatch(keys: string[]): Promise<BatchSettingsResponse> {
+    try {
+      return await invoke<BatchSettingsResponse>('get_settings_batch', { keys })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async set(key: string, value: unknown): Promise<UserSetting> {
+    try {
+      return await invoke<UserSetting>('set_setting', { key, value })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async delete(key: string): Promise<void> {
+    try {
+      await invoke('delete_setting', { key })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+}
+
+// ==================== IPC LLM Config API ====================
+
+class IpcLLMConfigApi implements ILLMConfigApi {
+  async getAll(): Promise<LLMConfigResponse[]> {
+    try {
+      return await invoke<LLMConfigResponse[]>('get_all_llm_configs')
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async get(id: number): Promise<LLMConfigResponse> {
+    try {
+      return await invoke<LLMConfigResponse>('get_llm_config', { id })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async getDefault(): Promise<LLMConfigResponse | null> {
+    try {
+      return await invoke<LLMConfigResponse | null>('get_default_llm_config')
+    } catch {
+      return null
+    }
+  }
+
+  async create(data: CreateLLMConfigRequest): Promise<LLMConfigResponse> {
+    try {
+      return await invoke<LLMConfigResponse>('create_llm_config', { data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async update(id: number, data: UpdateLLMConfigRequest): Promise<LLMConfigResponse> {
+    try {
+      return await invoke<LLMConfigResponse>('update_llm_config', { id, data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async delete(id: number): Promise<void> {
+    try {
+      await invoke('delete_llm_config', { id })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async setDefault(id: number): Promise<LLMConfigResponse> {
+    try {
+      return await invoke<LLMConfigResponse>('set_default_llm_config', { id })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async getApiKey(id: number): Promise<string | null> {
+    try {
+      return await invoke<string | null>('get_llm_api_key', { id })
+    } catch {
+      return null
+    }
+  }
+}
+
 // ==================== IPC Adapter Factory ====================
 
 /**
@@ -803,5 +922,7 @@ export function createIpcAdapter(): IApiAdapter {
     savedQuery: new IpcSavedQueryApi(),
     k8s: new IpcK8sApi(),
     portForward: new IpcPortForwardApi(),
+    settings: new IpcSettingsApi(),
+    llmConfig: new IpcLLMConfigApi(),
   }
 }
