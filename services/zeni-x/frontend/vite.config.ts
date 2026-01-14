@@ -2,6 +2,9 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
 
+// Read port from environment variable, default to 15073
+const serverPort = parseInt(process.env.VITE_PORT || '15073', 10)
+
 export default defineConfig({
   plugins: [vue()],
   resolve: {
@@ -12,7 +15,7 @@ export default defineConfig({
   // Prevent Vite from clearing the terminal to allow Tauri to output
   clearScreen: false,
   server: {
-    port: 15073,
+    port: serverPort,
     // Make sure the server is accessible when running in Tauri
     host: process.env.TAURI_DEV_HOST || 'localhost',
     // Enable HMR in Tauri

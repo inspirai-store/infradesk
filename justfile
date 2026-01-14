@@ -21,10 +21,26 @@ dev: _check-deps
     cargo tauri dev
 
 # Start Web debug mode (HTTP API + Browser UI)
-# Tauri window shows log viewer, browser shows full UI
+# Starts backend first, waits for it to be ready, then starts frontend
+# Uses port 15074 for frontend (different from dev mode's 15073) to allow both modes to run simultaneously
 web: _check-deps
     #!/usr/bin/env bash
     set -euo pipefail
+
+    # Cleanup function
+    cleanup() {
+        echo ""
+        echo "Shutting down..."
+        # Kill background processes
+        if [ -n "${BACKEND_PID:-}" ]; then
+            kill $BACKEND_PID 2>/dev/null || true
+        fi
+        if [ -n "${FRONTEND_PID:-}" ]; then
+            kill $FRONTEND_PID 2>/dev/null || true
+        fi
+        exit 0
+    }
+    trap cleanup SIGINT SIGTERM
 
     # Kill any existing processes on our ports
     echo "Checking for existing processes..."
@@ -35,26 +51,71 @@ web: _check-deps
         lsof -ti:12420 | xargs kill -9 2>/dev/null || true
     fi
 
-    # Kill processes on Vite dev server port (15073)
-    if lsof -ti:15073 >/dev/null 2>&1; then
-        echo "  Stopping process on port 15073..."
-        lsof -ti:15073 | xargs kill -9 2>/dev/null || true
+    # Kill processes on Vite dev server port (15074 for web mode)
+    if lsof -ti:15074 >/dev/null 2>&1; then
+        echo "  Stopping process on port 15074..."
+        lsof -ti:15074 | xargs kill -9 2>/dev/null || true
     fi
 
     # Small delay to ensure ports are released
     sleep 0.5
 
-    echo "Starting Web debug mode..."
+    echo ""
+    echo "===== Starting Web Debug Mode ====="
+    echo ""
+
+    # Step 1: Start backend HTTP server
+    echo "[1/3] Starting backend HTTP server..."
+    cargo run --bin web-server --manifest-path src-tauri/Cargo.toml &
+    BACKEND_PID=$!
+
+    # Step 2: Wait for backend to be ready
+    echo "[2/3] Waiting for backend to be ready..."
+    max_attempts=30
+    attempt=0
+    while [ $attempt -lt $max_attempts ]; do
+        if curl -s http://127.0.0.1:12420/api/health > /dev/null 2>&1; then
+            echo "       Backend is ready!"
+            break
+        fi
+        attempt=$((attempt + 1))
+        sleep 1
+    done
+
+    if [ $attempt -eq $max_attempts ]; then
+        echo "ERROR: Backend failed to start within 30 seconds"
+        cleanup
+        exit 1
+    fi
+
+    # Step 3: Start frontend Vite dev server with log piping
+    echo "[3/3] Starting frontend Vite dev server..."
+    export VITE_PORT=15074
+    pnpm --dir services/zeni-x/frontend dev 2>&1 | ./scripts/vite-log-pipe.sh &
+    FRONTEND_PID=$!
+
+    # Wait for Vite to be ready
+    sleep 2
+
+    echo ""
+    echo "===== Web Debug Mode Started ====="
     echo ""
     echo "  HTTP API:   http://127.0.0.1:12420"
-    echo "  Browser UI: http://localhost:15073"
-    echo "  Tauri:      Log viewer window"
+    echo "  Browser UI: http://localhost:15074"
+    echo "  Log Viewer: http://localhost:15074/log-viewer.html"
     echo ""
-    echo "Open http://localhost:15073 in your browser to use the UI."
-    echo "The Tauri window will show backend logs."
+    echo "Press Ctrl+C to stop all services."
     echo ""
-    export ZENI_WEB_MODE=1
-    cargo tauri dev
+
+    # Open Log Viewer in browser
+    if command -v open >/dev/null 2>&1; then
+        open "http://localhost:15074/log-viewer.html"
+    elif command -v xdg-open >/dev/null 2>&1; then
+        xdg-open "http://localhost:15074/log-viewer.html"
+    fi
+
+    # Wait for any background process to exit
+    wait
 
 # Build Tauri desktop app for production
 build TAG="":

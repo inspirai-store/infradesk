@@ -5468,6 +5468,7 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -6843,6 +6844,7 @@ dependencies = [
  "csv",
  "dirs 5.0.1",
  "env_logger",
+ "futures",
  "k8s-openapi",
  "kube",
  "log",
@@ -6860,6 +6862,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.17",
  "tokio",
+ "tokio-stream",
  "tower-http 0.5.2",
  "urlencoding",
  "uuid",

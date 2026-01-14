@@ -10,12 +10,14 @@
 //! - Port forwarding
 //! - User settings
 //! - LLM configuration
+//! - Log aggregation (for web debug mode)
 
 pub mod cluster;
 pub mod connection;
 pub mod crypto;
 pub mod k8s;
 pub mod llm_config;
+pub mod log_service;
 pub mod mysql;
 pub mod port_forward;
 pub mod redis;
@@ -26,6 +28,7 @@ pub use connection::ConnectionService;
 pub use crypto::CryptoService;
 pub use k8s::K8sService;
 pub use llm_config::LLMConfigService;
+pub use log_service::{AddLogRequest, LogEntry, LogLevel, LogService, LogSource};
 pub use mysql::MysqlService;
 pub use port_forward::PortForwardService;
 pub use redis::RedisService;

@@ -81,8 +81,8 @@ pub fn run() {
                             window.set_title("Zeni-X Log Viewer").ok();
                             window.set_size(tauri::LogicalSize::new(700.0, 450.0)).ok();
                             // Navigate to log viewer page
-                            // In dev mode, Vite serves the public folder at root
-                            let log_viewer_url = tauri::Url::parse("http://localhost:15073/log-viewer.html")
+                            // In web mode, Vite uses port 15074 (different from dev mode's 15073)
+                            let log_viewer_url = tauri::Url::parse("http://localhost:15074/log-viewer.html")
                                 .expect("Invalid log viewer URL");
                             window.navigate(log_viewer_url).ok();
                             log::info!("Window configured for log viewer mode");

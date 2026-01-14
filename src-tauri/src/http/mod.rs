@@ -10,10 +10,16 @@ use std::time::Duration;
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode},
-    response::IntoResponse,
+    response::{
+        sse::{Event, KeepAlive, Sse},
+        IntoResponse,
+    },
     routing::{delete, get, post, put},
     Json, Router,
 };
+use futures::stream::Stream;
+use tokio_stream::wrappers::BroadcastStream;
+use tokio_stream::StreamExt;
 use k8s_openapi::api::core::v1::Pod;
 use kube::config::{KubeConfigOptions, Kubeconfig};
 use kube::{Api, Client, Config};
@@ -39,7 +45,8 @@ use crate::db::models::{
 use crate::db::SqlitePool;
 use crate::error::AppError;
 use crate::services::{
-    ClusterService, ConnectionService, K8sService, MysqlService, PortForwardService, RedisService,
+    AddLogRequest, ClusterService, ConnectionService, K8sService, LogEntry, LogService, MysqlService,
+    PortForwardService, RedisService,
 };
 
 /// Application state shared across all routes
@@ -47,13 +54,17 @@ use crate::services::{
 pub struct AppState {
     pub pool: SqlitePool,
     pub port_forward_service: Arc<RwLock<PortForwardService>>,
+    pub log_service: LogService,
 }
 
 /// Create the HTTP router with all API routes
 pub fn create_router(pool: SqlitePool, pf_service: PortForwardService) -> Router {
+    let log_service = LogService::new();
+
     let state = Arc::new(AppState {
         pool,
         port_forward_service: Arc::new(RwLock::new(pf_service)),
+        log_service,
     });
 
     let cors = CorsLayer::new()
@@ -211,6 +222,11 @@ pub fn create_router(pool: SqlitePool, pf_service: PortForwardService) -> Router
         .route("/api/llm-configs/:id", delete(delete_llm_config_http))
         .route("/api/llm-configs/:id/default", put(set_default_llm_config_http))
         .route("/api/llm-configs/:id/api-key", get(get_llm_api_key_http))
+        // Health check route
+        .route("/api/health", get(health_check))
+        // Log streaming routes
+        .route("/api/logs", get(get_logs).post(add_log))
+        .route("/api/logs/stream", get(stream_logs))
         .layer(cors)
         .with_state(state)
 }
@@ -231,6 +247,60 @@ impl IntoResponse for AppError {
 
         (status, body).into_response()
     }
+}
+
+// ==================== Health Check ====================
+
+/// Health check endpoint for verifying server readiness
+async fn health_check() -> Json<serde_json::Value> {
+    Json(serde_json::json!({
+        "status": "ok",
+        "timestamp": chrono::Utc::now().to_rfc3339()
+    }))
+}
+
+// ==================== Log Streaming ====================
+
+/// Get all logs in buffer
+async fn get_logs(
+    State(state): State<Arc<AppState>>,
+) -> Json<Vec<LogEntry>> {
+    let logs = state.log_service.get_logs().await;
+    Json(logs)
+}
+
+/// Add a log entry from external source (Vite or Browser)
+async fn add_log(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<AddLogRequest>,
+) -> StatusCode {
+    state.log_service.add_external_log(request).await;
+    StatusCode::CREATED
+}
+
+/// Stream logs via Server-Sent Events
+async fn stream_logs(
+    State(state): State<Arc<AppState>>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+    // Subscribe to the log broadcast channel
+    let rx = state.log_service.subscribe();
+
+    // Convert broadcast receiver to a stream
+    let stream = BroadcastStream::new(rx)
+        .filter_map(|result| {
+            match result {
+                Ok(log_entry) => {
+                    // Serialize log entry to JSON
+                    match serde_json::to_string(&log_entry) {
+                        Ok(json) => Some(Ok(Event::default().data(json))),
+                        Err(_) => None,
+                    }
+                }
+                Err(_) => None, // Ignore lagged messages
+            }
+        });
+
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }
 
 // ==================== Helper functions ====================

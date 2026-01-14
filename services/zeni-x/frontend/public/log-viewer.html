@@ -27,6 +27,7 @@
     .title { font-weight: bold; color: #569cd6; font-size: 13px; }
     .status { color: #4ec9b0; font-size: 11px; }
     .status.error { color: #f14c4c; }
+    .status.connecting { color: #dcdcaa; }
     .controls {
       display: flex;
       gap: 8px;
@@ -42,6 +43,47 @@
     }
     .controls button:hover { background: #4d4d4d; }
     .controls button:active { background: #5d5d5d; }
+
+    /* Tab styles */
+    .tabs {
+      display: flex;
+      background: #252526;
+      border-bottom: 1px solid #3d3d3d;
+      flex-shrink: 0;
+    }
+    .tab {
+      padding: 8px 16px;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: #808080;
+      font-size: 12px;
+      font-family: inherit;
+      border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+    .tab:hover {
+      color: #d4d4d4;
+      background: #2d2d2d;
+    }
+    .tab.active {
+      color: #d4d4d4;
+      border-bottom-color: #569cd6;
+      background: #1e1e1e;
+    }
+    .tab.all { border-bottom-color: #569cd6; }
+    .tab.backend.active { border-bottom-color: #569cd6; }
+    .tab.vite.active { border-bottom-color: #4ec9b0; }
+    .tab.browser.active { border-bottom-color: #ce9178; }
+
+    .tab-count {
+      margin-left: 6px;
+      padding: 1px 6px;
+      border-radius: 10px;
+      font-size: 10px;
+      background: #3d3d3d;
+    }
+
     .logs {
       flex: 1;
       overflow-y: auto;
@@ -57,13 +99,21 @@
     .log-line.warn { color: #dcdcaa; }
     .log-line.error { color: #f14c4c; }
     .log-line.debug { color: #808080; }
-    .log-line.request { color: #ce9178; }
+    .log-line.log { color: #d4d4d4; }
     .log-line .time { color: #6a9955; margin-right: 8px; }
+    .log-line .source {
+      display: inline-block;
+      width: 70px;
+      margin-right: 8px;
+      font-weight: bold;
+    }
+    .log-line .source.backend { color: #569cd6; }
+    .log-line .source.vite { color: #4ec9b0; }
+    .log-line .source.browser { color: #ce9178; }
     .log-line .level {
       display: inline-block;
       width: 50px;
       margin-right: 8px;
-      font-weight: bold;
     }
     .footer {
       background: #2d2d2d;
@@ -72,67 +122,189 @@
       font-size: 11px;
       color: #808080;
       flex-shrink: 0;
+      display: flex;
+      justify-content: space-between;
     }
   </style>
 </head>
 <body>
   <div class="header">
     <span class="title">Zeni-X Log Viewer</span>
-    <span class="status" id="status">HTTP Server: 127.0.0.1:12420</span>
+    <span class="status connecting" id="status">Connecting...</span>
     <div class="controls">
       <button onclick="clearLogs()">Clear</button>
       <button onclick="scrollToBottom()">Bottom</button>
       <button onclick="toggleAutoScroll()" id="autoScrollBtn">Auto-scroll: ON</button>
     </div>
   </div>
+  <div class="tabs">
+    <button class="tab all active" data-source="all" onclick="switchTab('all')">
+      All<span class="tab-count" id="count-all">0</span>
+    </button>
+    <button class="tab backend" data-source="backend" onclick="switchTab('backend')">
+      Backend<span class="tab-count" id="count-backend">0</span>
+    </button>
+    <button class="tab vite" data-source="vite" onclick="switchTab('vite')">
+      Vite<span class="tab-count" id="count-vite">0</span>
+    </button>
+    <button class="tab browser" data-source="browser" onclick="switchTab('browser')">
+      Browser<span class="tab-count" id="count-browser">0</span>
+    </button>
+  </div>
   <div class="logs" id="logs"></div>
   <div class="footer">
-    <span id="lineCount">0 lines</span> |
-    <span>Browser UI: <a href="http://localhost:15073" target="_blank" style="color: #569cd6;">http://localhost:15073</a></span>
+    <span id="lineCount">0 lines</span>
+    <span>Browser UI: <a href="http://localhost:15074" target="_blank" style="color: #569cd6;">http://localhost:15074</a></span>
   </div>
   <script>
     const logsEl = document.getElementById('logs');
     const statusEl = document.getElementById('status');
     const lineCountEl = document.getElementById('lineCount');
     const autoScrollBtn = document.getElementById('autoScrollBtn');
-    let autoScroll = true;
-    let lineCount = 0;
 
-    // Try to connect to Tauri event system
-    if (window.__TAURI__) {
-      window.__TAURI__.event.listen('log', (event) => {
-        appendLog(event.payload);
-      });
-      statusEl.textContent = 'Connected to Tauri';
-    } else {
-      // Fallback: poll HTTP endpoint for logs (if implemented)
-      statusEl.textContent = 'HTTP Server: 127.0.0.1:12420';
+    let autoScroll = true;
+    let currentTab = 'all';
+    let eventSource = null;
+    let reconnectAttempts = 0;
+    const maxReconnectAttempts = 10;
+
+    // Store logs by source for filtering
+    const logsBySource = {
+      all: [],
+      backend: [],
+      vite: [],
+      browser: []
+    };
+
+    // Connect to SSE endpoint
+    function connectSSE() {
+      statusEl.textContent = 'Connecting...';
+      statusEl.className = 'status connecting';
+
+      eventSource = new EventSource('http://127.0.0.1:12420/api/logs/stream');
+
+      eventSource.onopen = () => {
+        statusEl.textContent = 'Connected';
+        statusEl.className = 'status';
+        reconnectAttempts = 0;
+        appendLog({
+          source: 'backend',
+          level: 'info',
+          message: 'Connected to log stream'
+        }, false);
+      };
+
+      eventSource.onmessage = (event) => {
+        try {
+          const log = JSON.parse(event.data);
+          appendLog(log, true);
+        } catch (e) {
+          console.error('Failed to parse log:', e);
+        }
+      };
+
+      eventSource.onerror = () => {
+        eventSource.close();
+        statusEl.textContent = 'Disconnected';
+        statusEl.className = 'status error';
+
+        // Try to reconnect
+        if (reconnectAttempts < maxReconnectAttempts) {
+          reconnectAttempts++;
+          const delay = Math.min(1000 * reconnectAttempts, 5000);
+          statusEl.textContent = `Reconnecting in ${delay/1000}s...`;
+          statusEl.className = 'status connecting';
+          setTimeout(connectSSE, delay);
+        } else {
+          statusEl.textContent = 'Connection failed';
+          appendLog({
+            source: 'backend',
+            level: 'error',
+            message: 'Failed to connect to log stream after multiple attempts'
+          }, false);
+        }
+      };
     }
 
-    function appendLog(log) {
-      const line = document.createElement('div');
+    function appendLog(log, fromStream = true) {
+      const source = (log.source || 'backend').toLowerCase();
       const level = (log.level || 'info').toLowerCase();
-      line.className = 'log-line ' + level;
+      const time = log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : new Date().toLocaleTimeString();
+      const message = log.message || '';
 
-      const time = log.time || new Date().toLocaleTimeString();
-      const levelStr = level.toUpperCase().padEnd(5);
-      const message = log.message || log;
+      const logEntry = { source, level, time, message };
 
-      line.innerHTML = `<span class="time">${time}</span><span class="level">${levelStr}</span>${escapeHtml(message)}`;
+      // Add to appropriate arrays
+      logsBySource.all.push(logEntry);
+      if (logsBySource[source]) {
+        logsBySource[source].push(logEntry);
+      }
+
+      // Limit buffer size
+      const maxLogs = 1000;
+      if (logsBySource.all.length > maxLogs) {
+        const removed = logsBySource.all.shift();
+        if (logsBySource[removed.source]) {
+          logsBySource[removed.source].shift();
+        }
+      }
+
+      // Update counts
+      updateCounts();
+
+      // Only render if this log matches current tab
+      if (currentTab === 'all' || currentTab === source) {
+        renderLogLine(logEntry);
+      }
+    }
+
+    function renderLogLine(logEntry) {
+      const line = document.createElement('div');
+      line.className = 'log-line ' + logEntry.level;
+
+      const sourceClass = logEntry.source;
+      const sourceLabel = logEntry.source.toUpperCase().padEnd(7);
+      const levelStr = logEntry.level.toUpperCase().padEnd(5);
+
+      line.innerHTML = `<span class="time">${logEntry.time}</span><span class="source ${sourceClass}">[${sourceLabel}]</span><span class="level">${levelStr}</span>${escapeHtml(logEntry.message)}`;
       logsEl.appendChild(line);
 
-      lineCount++;
-      lineCountEl.textContent = lineCount + ' lines';
-
-      // Limit to 1000 lines
-      if (lineCount > 1000) {
+      // Limit visible lines
+      if (logsEl.children.length > 1000) {
         logsEl.removeChild(logsEl.firstChild);
-        lineCount--;
       }
 
       if (autoScroll) {
         logsEl.scrollTop = logsEl.scrollHeight;
       }
+    }
+
+    function updateCounts() {
+      document.getElementById('count-all').textContent = logsBySource.all.length;
+      document.getElementById('count-backend').textContent = logsBySource.backend.length;
+      document.getElementById('count-vite').textContent = logsBySource.vite.length;
+      document.getElementById('count-browser').textContent = logsBySource.browser.length;
+
+      // Update line count based on current tab
+      const currentLogs = logsBySource[currentTab] || logsBySource.all;
+      lineCountEl.textContent = currentLogs.length + ' lines';
+    }
+
+    function switchTab(source) {
+      currentTab = source;
+
+      // Update tab styles
+      document.querySelectorAll('.tab').forEach(tab => {
+        tab.classList.remove('active');
+      });
+      document.querySelector(`.tab[data-source="${source}"]`).classList.add('active');
+
+      // Re-render logs
+      logsEl.innerHTML = '';
+      const logs = logsBySource[source] || logsBySource.all;
+      logs.forEach(log => renderLogLine(log));
+
+      updateCounts();
     }
 
     function escapeHtml(text) {
@@ -143,9 +315,16 @@
 
     function clearLogs() {
       logsEl.innerHTML = '';
-      lineCount = 0;
-      lineCountEl.textContent = '0 lines';
-      appendLog({ level: 'info', message: 'Logs cleared.' });
+      logsBySource.all = [];
+      logsBySource.backend = [];
+      logsBySource.vite = [];
+      logsBySource.browser = [];
+      updateCounts();
+      appendLog({
+        source: 'backend',
+        level: 'info',
+        message: 'Logs cleared.'
+      }, false);
     }
 
     function scrollToBottom() {
@@ -157,10 +336,25 @@
       autoScrollBtn.textContent = 'Auto-scroll: ' + (autoScroll ? 'ON' : 'OFF');
     }
 
-    // Initial message
-    appendLog({ level: 'info', message: 'Log viewer started. Waiting for backend logs...' });
-    appendLog({ level: 'info', message: 'HTTP API: http://127.0.0.1:12420' });
-    appendLog({ level: 'info', message: 'Browser UI: http://localhost:15073' });
+    // Initial messages
+    appendLog({
+      source: 'backend',
+      level: 'info',
+      message: 'Log viewer started.'
+    }, false);
+    appendLog({
+      source: 'backend',
+      level: 'info',
+      message: 'HTTP API: http://127.0.0.1:12420'
+    }, false);
+    appendLog({
+      source: 'backend',
+      level: 'info',
+      message: 'Browser UI: http://localhost:15074'
+    }, false);
+
+    // Start SSE connection
+    connectSSE();
   </script>
 </body>
 </html>
