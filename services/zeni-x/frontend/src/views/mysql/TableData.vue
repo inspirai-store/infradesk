@@ -19,11 +19,12 @@ import {
   useMessage,
   useDialog,
 } from 'naive-ui'
-import { 
-  AddOutline, 
-  TrashOutline, 
+import {
+  AddOutline,
+  TrashOutline,
   RefreshOutline,
   DownloadOutline,
+  CloudUploadOutline,
   CheckmarkCircleOutline,
   CloseCircleOutline,
   SaveOutline,
@@ -31,6 +32,10 @@ import {
 import { useMySQLStore } from '@/stores/mysql'
 import { mysqlApi } from '@/api'
 import type { DataTableColumns } from 'naive-ui'
+import IndexManager from './components/IndexManager.vue'
+import ForeignKeyManager from './components/ForeignKeyManager.vue'
+import ExportDialog from './components/ExportDialog.vue'
+import ImportDialog from './components/ImportDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -66,6 +71,10 @@ const hasModifications = computed(() => modifiedCount.value > 0)
 
 const showAddModal = ref(false)
 const newRowData = ref<Record<string, string>>({})
+
+// Export/Import dialog state
+const showExportDialog = ref(false)
+const showImportDialog = ref(false)
 
 // 获取单元格修改状态
 function getCellModification(rowIndex: number, column: string): CellModification | null {
@@ -398,20 +407,16 @@ async function handleAddRow() {
   }
 }
 
-async function handleExport() {
-  try {
-    const data = await mysqlApi.exportData(database.value, table.value, 'json')
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `${table.value}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-    message.success('导出完成')
-  } catch (e) {
-    message.error((e as Error).message)
-  }
+function handleExport() {
+  showExportDialog.value = true
+}
+
+function handleImport() {
+  showImportDialog.value = true
+}
+
+function onImported() {
+  fetchData()
 }
 
 function handlePageChange(newPage: number) {
@@ -523,6 +528,12 @@ watch([database, table], () => {
                   </template>
                   导出
                 </NButton>
+                <NButton size="tiny" @click="handleImport">
+                  <template #icon>
+                    <NIcon size="14"><CloudUploadOutline /></NIcon>
+                  </template>
+                  导入
+                </NButton>
                 <NButton size="tiny" type="primary" @click="openAddModal">
                   <template #icon>
                     <NIcon size="14"><AddOutline /></NIcon>
@@ -617,8 +628,22 @@ watch([database, table], () => {
           />
         </NCard>
       </NTabPane>
+
+      <!-- Indexes Tab -->
+      <NTabPane name="indexes" tab="索引">
+        <NCard class="glass-card">
+          <IndexManager :database="database" :table="table" />
+        </NCard>
+      </NTabPane>
+
+      <!-- Foreign Keys Tab -->
+      <NTabPane name="foreign-keys" tab="外键">
+        <NCard class="glass-card">
+          <ForeignKeyManager :database="database" :table="table" />
+        </NCard>
+      </NTabPane>
     </NTabs>
-    
+
     <!-- Add Row Modal -->
     <NModal
       v-model:show="showAddModal"
@@ -643,6 +668,23 @@ watch([database, table], () => {
         </NSpace>
       </template>
     </NModal>
+
+    <!-- Export Dialog -->
+    <ExportDialog
+      v-model:show="showExportDialog"
+      :database="database"
+      :table="table"
+      :columns="columns"
+    />
+
+    <!-- Import Dialog -->
+    <ImportDialog
+      v-model:show="showImportDialog"
+      :database="database"
+      :table="table"
+      :columns="columns"
+      @imported="onImported"
+    />
   </div>
 </template>
 

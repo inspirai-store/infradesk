@@ -354,6 +354,303 @@ pub struct GrantPrivilegesRequest {
     pub privileges: Vec<String>,
 }
 
+/// Request to alter user password
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlterUserPasswordRequest {
+    pub username: String,
+    pub host: String,
+    pub new_password: String,
+}
+
+/// Request to drop a user
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DropUserRequest {
+    pub username: String,
+    pub host: String,
+}
+
+/// Request to revoke privileges
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RevokePrivilegesRequest {
+    pub username: String,
+    pub host: String,
+    /// Privileges to revoke (e.g., SELECT, INSERT, ALL PRIVILEGES)
+    pub privileges: Vec<String>,
+    /// Database scope (e.g., "mydb" for mydb.*, "*" for *.*)
+    pub database: String,
+}
+
+/// User grant information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserGrantInfo {
+    /// The full GRANT statement
+    pub grant_statement: String,
+}
+
+/// User grants response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserGrantsResponse {
+    pub username: String,
+    pub host: String,
+    pub grants: Vec<UserGrantInfo>,
+}
+
+// ==================== MySQL Table Management Models ====================
+
+/// Column definition for creating/altering tables
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColumnDefinition {
+    /// Column name
+    pub name: String,
+    /// Data type (e.g., INT, VARCHAR(255), TEXT, DATETIME, JSON)
+    pub data_type: String,
+    /// Whether the column allows NULL
+    #[serde(default)]
+    pub nullable: bool,
+    /// Default value (as SQL expression)
+    pub default: Option<String>,
+    /// Whether this column is auto-increment
+    #[serde(default)]
+    pub auto_increment: bool,
+    /// Column comment
+    pub comment: Option<String>,
+}
+
+/// Index definition for creating/altering tables
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexDefinition {
+    /// Index name
+    pub name: String,
+    /// Columns included in the index
+    pub columns: Vec<String>,
+    /// Whether this is a unique index
+    #[serde(default)]
+    pub unique: bool,
+    /// Index type (BTREE, HASH, FULLTEXT)
+    pub index_type: Option<String>,
+}
+
+/// Request to create a MySQL table
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateTableRequest {
+    /// Table name
+    pub name: String,
+    /// Column definitions
+    pub columns: Vec<ColumnDefinition>,
+    /// Primary key columns
+    pub primary_key: Option<Vec<String>>,
+    /// Index definitions
+    pub indexes: Option<Vec<IndexDefinition>>,
+    /// Storage engine (InnoDB, MyISAM)
+    pub engine: Option<String>,
+    /// Character set (utf8mb4, utf8, latin1)
+    pub charset: Option<String>,
+    /// Collation (utf8mb4_unicode_ci)
+    pub collation: Option<String>,
+    /// Table comment
+    pub comment: Option<String>,
+}
+
+/// Request to rename a column
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenameColumnRequest {
+    pub old_name: String,
+    pub new_name: String,
+}
+
+/// Request to alter a MySQL table
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlterTableRequest {
+    /// Columns to add
+    pub add_columns: Option<Vec<ColumnDefinition>>,
+    /// Columns to drop (by name)
+    pub drop_columns: Option<Vec<String>>,
+    /// Columns to modify
+    pub modify_columns: Option<Vec<ColumnDefinition>>,
+    /// Column to rename
+    pub rename_column: Option<RenameColumnRequest>,
+    /// Indexes to add
+    pub add_indexes: Option<Vec<IndexDefinition>>,
+    /// Indexes to drop (by name)
+    pub drop_indexes: Option<Vec<String>>,
+}
+
+/// Request to rename a table
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RenameTableRequest {
+    pub new_name: String,
+}
+
+/// Request to copy a table
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CopyTableRequest {
+    /// Target table name
+    pub target_name: String,
+    /// Whether to copy data (true) or just structure (false)
+    #[serde(default)]
+    pub with_data: bool,
+}
+
+// ==================== Index Management Models ====================
+
+/// Index information from MySQL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IndexInfo {
+    /// Index name
+    pub name: String,
+    /// Column names in the index
+    pub columns: Vec<String>,
+    /// Whether this is a unique index
+    pub unique: bool,
+    /// Index type (BTREE, HASH, FULLTEXT, SPATIAL)
+    pub index_type: String,
+    /// Whether this is the primary key
+    pub is_primary: bool,
+    /// Index comment
+    pub comment: Option<String>,
+}
+
+/// Request to create a new index
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateIndexRequest {
+    /// Index name
+    pub name: String,
+    /// Column names to include in the index
+    pub columns: Vec<String>,
+    /// Whether this is a unique index
+    #[serde(default)]
+    pub unique: bool,
+    /// Index type (BTREE, HASH, FULLTEXT)
+    pub index_type: Option<String>,
+    /// Index comment
+    pub comment: Option<String>,
+}
+
+// ==================== Foreign Key Management Models ====================
+
+/// Foreign key information from MySQL
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForeignKeyInfo {
+    /// Constraint name
+    pub name: String,
+    /// Source column name(s)
+    pub columns: Vec<String>,
+    /// Referenced table name
+    pub ref_table: String,
+    /// Referenced column name(s)
+    pub ref_columns: Vec<String>,
+    /// ON DELETE action (CASCADE, SET NULL, RESTRICT, NO ACTION)
+    pub on_delete: String,
+    /// ON UPDATE action (CASCADE, SET NULL, RESTRICT, NO ACTION)
+    pub on_update: String,
+}
+
+/// Request to create a new foreign key
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateForeignKeyRequest {
+    /// Constraint name (optional, auto-generated if not provided)
+    pub name: Option<String>,
+    /// Source column name(s)
+    pub columns: Vec<String>,
+    /// Referenced table name
+    pub ref_table: String,
+    /// Referenced column name(s)
+    pub ref_columns: Vec<String>,
+    /// ON DELETE action (default: RESTRICT)
+    #[serde(default = "default_fk_action")]
+    pub on_delete: String,
+    /// ON UPDATE action (default: RESTRICT)
+    #[serde(default = "default_fk_action")]
+    pub on_update: String,
+}
+
+fn default_fk_action() -> String {
+    "RESTRICT".to_string()
+}
+
+// ==================== Data Export/Import Models ====================
+
+/// Export format options
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExportFormat {
+    Csv,
+    Json,
+    Sql,
+}
+
+impl Default for ExportFormat {
+    fn default() -> Self {
+        ExportFormat::Csv
+    }
+}
+
+/// Request to export table data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportTableRequest {
+    /// Export format (csv, json, sql)
+    #[serde(default)]
+    pub format: ExportFormat,
+    /// Columns to export (None = all columns)
+    pub columns: Option<Vec<String>>,
+    /// WHERE clause for filtering (optional)
+    pub where_clause: Option<String>,
+    /// Limit number of rows (optional)
+    pub limit: Option<u32>,
+    /// Include column headers (for CSV, default: true)
+    #[serde(default = "default_true")]
+    pub include_headers: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+/// Response containing exported data
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportTableResponse {
+    /// Exported data as string
+    pub data: String,
+    /// Export format used
+    pub format: String,
+    /// Number of rows exported
+    pub row_count: usize,
+}
+
+/// Request to import data into a table
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportDataRequest {
+    /// Data to import (CSV or JSON string)
+    pub data: String,
+    /// Import format (csv, json)
+    pub format: String,
+    /// Column mapping (optional, maps source columns to target columns)
+    pub column_mapping: Option<std::collections::HashMap<String, String>>,
+    /// Skip first N rows (useful for CSV with headers)
+    #[serde(default)]
+    pub skip_rows: usize,
+    /// On duplicate key action: ignore, update, error
+    #[serde(default = "default_duplicate_action")]
+    pub on_duplicate: String,
+}
+
+fn default_duplicate_action() -> String {
+    "error".to_string()
+}
+
+/// Result of import operation
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImportResult {
+    /// Number of rows successfully imported
+    pub imported: usize,
+    /// Number of rows skipped (due to duplicates, errors)
+    pub skipped: usize,
+    /// Number of rows failed
+    pub failed: usize,
+    /// Error messages for failed rows
+    pub errors: Vec<String>,
+}
+
 // ==================== Cluster Models ====================
 
 /// Kubernetes cluster configuration
@@ -384,10 +681,6 @@ pub struct Cluster {
 
     /// Last update timestamp
     pub updated_at: Option<String>,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 /// Discovered K8s service
@@ -1122,4 +1415,132 @@ impl From<LLMConfig> for LLMConfigResponse {
             updated_at: config.updated_at,
         }
     }
+}
+
+// ==================== Database Object Management Types ====================
+
+/// View information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ViewInfo {
+    pub name: String,
+    pub definer: Option<String>,
+    pub security_type: Option<String>,
+    pub check_option: Option<String>,
+    pub is_updatable: bool,
+}
+
+/// View definition (for viewing the CREATE VIEW statement)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ViewDefinition {
+    pub name: String,
+    pub definition: String,
+}
+
+/// Request to create a view
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateViewRequest {
+    pub name: String,
+    pub definition: String,  // The SELECT statement
+    pub or_replace: Option<bool>,
+    pub algorithm: Option<String>,  // UNDEFINED, MERGE, TEMPTABLE
+    pub security: Option<String>,   // DEFINER, INVOKER
+}
+
+/// Stored procedure/function information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcedureInfo {
+    pub name: String,
+    pub routine_type: String,  // PROCEDURE or FUNCTION
+    pub definer: Option<String>,
+    pub created: Option<String>,
+    pub modified: Option<String>,
+    pub security_type: Option<String>,
+    pub comment: Option<String>,
+}
+
+/// Stored procedure/function definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcedureDefinition {
+    pub name: String,
+    pub routine_type: String,
+    pub definition: String,
+}
+
+/// Trigger information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriggerInfo {
+    pub name: String,
+    pub event: String,      // INSERT, UPDATE, DELETE
+    pub timing: String,     // BEFORE, AFTER
+    pub table_name: String,
+    pub definer: Option<String>,
+    pub created: Option<String>,
+}
+
+/// Trigger definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TriggerDefinition {
+    pub name: String,
+    pub definition: String,
+}
+
+/// Event information (for scheduled events)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventInfo {
+    pub name: String,
+    pub definer: Option<String>,
+    pub status: String,         // ENABLED, DISABLED, SLAVESIDE_DISABLED
+    pub event_type: String,     // ONE TIME, RECURRING
+    pub execute_at: Option<String>,
+    pub interval_value: Option<String>,
+    pub interval_field: Option<String>,
+    pub starts: Option<String>,
+    pub ends: Option<String>,
+    pub created: Option<String>,
+    pub modified: Option<String>,
+}
+
+/// Event definition
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EventDefinition {
+    pub name: String,
+    pub definition: String,
+}
+
+// ==================== Server Monitoring Types ====================
+
+/// Server variable information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerVariable {
+    pub name: String,
+    pub value: String,
+}
+
+/// Process information from SHOW PROCESSLIST
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProcessInfo {
+    pub id: u64,
+    pub user: String,
+    pub host: String,
+    pub db: Option<String>,
+    pub command: String,
+    pub time: u64,
+    pub state: Option<String>,
+    pub info: Option<String>,
+}
+
+/// Query explain result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExplainResult {
+    pub query: String,
+    pub rows: Vec<serde_json::Value>,
+}
+
+/// Table check/repair result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TableMaintenanceResult {
+    pub table_name: String,
+    pub operation: String,
+    pub msg_type: String,
+    pub msg_text: String,
 }

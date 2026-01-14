@@ -165,6 +165,52 @@ pub fn run() {
             commands::mysql_list_users,
             commands::mysql_create_user,
             commands::mysql_grant_privileges,
+            // MySQL user management extended
+            commands::mysql_alter_user_password,
+            commands::mysql_drop_user,
+            commands::mysql_show_grants,
+            commands::mysql_revoke_privileges,
+            // MySQL table management
+            commands::mysql_create_table,
+            commands::mysql_alter_table,
+            commands::mysql_rename_table,
+            commands::mysql_truncate_table,
+            commands::mysql_copy_table,
+            // MySQL index management
+            commands::mysql_list_indexes,
+            commands::mysql_create_index,
+            commands::mysql_drop_index,
+            // MySQL foreign key management
+            commands::mysql_list_foreign_keys,
+            commands::mysql_create_foreign_key,
+            commands::mysql_drop_foreign_key,
+            // MySQL data export/import
+            commands::mysql_export_table,
+            commands::mysql_import_data,
+            // MySQL view management
+            commands::mysql_list_views,
+            commands::mysql_get_view_definition,
+            commands::mysql_create_view,
+            commands::mysql_drop_view,
+            // MySQL stored procedure management
+            commands::mysql_list_procedures,
+            commands::mysql_get_procedure_definition,
+            commands::mysql_drop_procedure,
+            commands::mysql_drop_function,
+            // MySQL trigger management
+            commands::mysql_list_triggers,
+            commands::mysql_get_trigger_definition,
+            commands::mysql_drop_trigger,
+            // MySQL server monitoring
+            commands::mysql_get_server_variables,
+            commands::mysql_get_process_list,
+            commands::mysql_kill_process,
+            // MySQL query analysis
+            commands::mysql_explain_query,
+            // MySQL table maintenance
+            commands::mysql_optimize_table,
+            commands::mysql_analyze_table,
+            commands::mysql_check_table,
             // Redis operations
             commands::redis_get_info,
             commands::redis_list_keys,

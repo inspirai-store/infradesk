@@ -16,9 +16,48 @@ export type {
   GrantPrivilegesRequest,
   CreateUserRequest,
   UserInfo,
+  // User permission management types
+  AlterUserPasswordRequest,
+  DropUserRequest,
+  RevokePrivilegesRequest,
+  UserGrantInfo,
+  UserGrantsResponse,
+  // Table management types
+  ColumnDefinition,
+  IndexDefinition,
   CreateTableRequest,
-  ColumnDef,
   AlterTableRequest,
+  RenameColumnRequest,
+  RenameTableRequest,
+  CopyTableRequest,
+  // Index management types
+  IndexInfo,
+  CreateIndexRequest,
+  // Foreign key management types
+  ForeignKeyInfo,
+  CreateForeignKeyRequest,
+  // Data export/import types
+  ExportFormat,
+  ExportTableRequest,
+  ExportTableResponse,
+  ImportDataRequest,
+  ImportResult,
+  // View management types
+  ViewInfo,
+  ViewDefinition,
+  CreateViewRequest,
+  // Stored procedure types
+  ProcedureInfo,
+  ProcedureDefinition,
+  // Trigger management types
+  TriggerInfo,
+  TriggerDefinition,
+  // Server monitoring types
+  ServerVariable,
+  ProcessInfo,
+  ExplainResult,
+  TableMaintenanceResult,
+  ColumnDef, // Legacy, deprecated
   UpdateRowRequest,
   SetKeyRequest,
   ExportData,
@@ -113,8 +152,6 @@ export interface IMysqlApi {
   createDatabase(data: import('./index').CreateDatabaseRequest): Promise<unknown>
   /** Alter database settings */
   alterDatabase(name: string, data: import('./index').AlterDatabaseRequest): Promise<unknown>
-  /** Grant privileges on a database */
-  grantPrivileges(name: string, data: import('./index').GrantPrivilegesRequest): Promise<unknown>
   /** Drop a database */
   dropDatabase(name: string): Promise<unknown>
 
@@ -122,9 +159,31 @@ export interface IMysqlApi {
   /** List tables in a database */
   listTables(database: string): Promise<unknown>
   /** Create a new table */
-  createTable(database: string, data: import('./index').CreateTableRequest): Promise<unknown>
+  createTable(database: string, data: import('./index').CreateTableRequest): Promise<void>
   /** Drop a table */
-  dropTable(database: string, table: string): Promise<unknown>
+  dropTable(database: string, table: string): Promise<void>
+  /** Rename a table */
+  renameTable(database: string, table: string, newName: string): Promise<void>
+  /** Truncate a table (delete all rows, reset auto-increment) */
+  truncateTable(database: string, table: string): Promise<void>
+  /** Copy a table (structure only or with data) */
+  copyTable(database: string, table: string, targetName: string, withData?: boolean): Promise<void>
+
+  // Index operations
+  /** List all indexes on a table */
+  listIndexes(database: string, table: string): Promise<import('./index').IndexInfo[]>
+  /** Create an index on a table */
+  createIndex(database: string, table: string, data: import('./index').CreateIndexRequest): Promise<void>
+  /** Drop an index from a table */
+  dropIndex(database: string, table: string, indexName: string): Promise<void>
+
+  // Foreign key operations
+  /** List all foreign keys on a table */
+  listForeignKeys(database: string, table: string): Promise<import('./index').ForeignKeyInfo[]>
+  /** Create a foreign key on a table */
+  createForeignKey(database: string, table: string, data: import('./index').CreateForeignKeyRequest): Promise<void>
+  /** Drop a foreign key from a table */
+  dropForeignKey(database: string, table: string, fkName: string): Promise<void>
 
   // Schema operations
   /** Get table schema */
@@ -132,7 +191,7 @@ export interface IMysqlApi {
   /** Get database schema */
   getDatabaseSchema(database: string): Promise<unknown>
   /** Alter table schema */
-  alterTable(database: string, table: string, data: import('./index').AlterTableRequest): Promise<unknown>
+  alterTable(database: string, table: string, data: import('./index').AlterTableRequest): Promise<void>
   /** Get table primary key */
   getTablePrimaryKey(database: string, table: string): Promise<{ primary_key: string }>
 
@@ -160,17 +219,73 @@ export interface IMysqlApi {
 
   // Export/Import operations
   /** Export table data */
-  exportData(database: string, table: string, format?: string): Promise<unknown>
+  exportTable(database: string, table: string, request: import('./index').ExportTableRequest): Promise<import('./index').ExportTableResponse>
   /** Import data into table */
-  importData(database: string, table: string, rows: Record<string, unknown>[]): Promise<unknown>
+  importData(database: string, table: string, request: import('./index').ImportDataRequest): Promise<import('./index').ImportResult>
 
   // User management
   /** List MySQL users */
   listUsers(): Promise<import('./index').UserInfo[]>
   /** Create a MySQL user */
   createUser(data: import('./index').CreateUserRequest): Promise<unknown>
-  /** List user grants */
-  listUserGrants(username: string, host?: string): Promise<unknown>
+  /** Grant privileges to a user */
+  grantPrivileges(database: string, data: import('./index').GrantPrivilegesRequest): Promise<void>
+  /** Alter user password */
+  alterUserPassword(data: import('./index').AlterUserPasswordRequest): Promise<void>
+  /** Drop a MySQL user */
+  dropUser(data: import('./index').DropUserRequest): Promise<void>
+  /** Show grants for a user */
+  showGrants(username: string, host: string): Promise<import('./index').UserGrantsResponse>
+  /** Revoke privileges from a user */
+  revokePrivileges(data: import('./index').RevokePrivilegesRequest): Promise<void>
+
+  // View operations
+  /** List all views in a database */
+  listViews(database: string): Promise<import('./index').ViewInfo[]>
+  /** Get view definition */
+  getViewDefinition(database: string, view: string): Promise<import('./index').ViewDefinition>
+  /** Create a view */
+  createView(database: string, data: import('./index').CreateViewRequest): Promise<void>
+  /** Drop a view */
+  dropView(database: string, view: string): Promise<void>
+
+  // Stored procedure operations
+  /** List all stored procedures and functions in a database */
+  listProcedures(database: string): Promise<import('./index').ProcedureInfo[]>
+  /** Get procedure/function definition */
+  getProcedureDefinition(database: string, name: string, routineType?: string): Promise<import('./index').ProcedureDefinition>
+  /** Drop a stored procedure */
+  dropProcedure(database: string, name: string): Promise<void>
+  /** Drop a function */
+  dropFunction(database: string, name: string): Promise<void>
+
+  // Trigger operations
+  /** List all triggers in a database */
+  listTriggers(database: string): Promise<import('./index').TriggerInfo[]>
+  /** Get trigger definition */
+  getTriggerDefinition(database: string, name: string): Promise<import('./index').TriggerDefinition>
+  /** Drop a trigger */
+  dropTrigger(database: string, name: string): Promise<void>
+
+  // Server monitoring operations
+  /** Get server variables */
+  getServerVariables(filter?: string): Promise<import('./index').ServerVariable[]>
+  /** Get process list */
+  getProcessList(): Promise<import('./index').ProcessInfo[]>
+  /** Kill a process */
+  killProcess(processId: number): Promise<void>
+
+  // Query analysis operations
+  /** Explain a query */
+  explainQuery(database: string, query: string): Promise<import('./index').ExplainResult>
+
+  // Table maintenance operations
+  /** Optimize a table */
+  optimizeTable(database: string, table: string): Promise<import('./index').TableMaintenanceResult>
+  /** Analyze a table */
+  analyzeTable(database: string, table: string): Promise<import('./index').TableMaintenanceResult>
+  /** Check a table */
+  checkTable(database: string, table: string): Promise<import('./index').TableMaintenanceResult>
 }
 
 // ==================== Redis API Interface ====================

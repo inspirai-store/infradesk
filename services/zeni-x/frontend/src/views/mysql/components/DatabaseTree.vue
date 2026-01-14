@@ -28,10 +28,12 @@ import {
   CopyOutline,
   CreateOutline,
   PersonOutline,
+  SpeedometerOutline,
+  LayersOutline,
 } from '@vicons/ionicons5'
 import type { TreeOption } from 'naive-ui'
 import { useMySQLStore } from '@/stores/mysql'
-import type { CreateDatabaseRequest, AlterDatabaseRequest, GrantPrivilegesRequest } from '@/api'
+import type { CreateDatabaseRequest, AlterDatabaseRequest } from '@/api'
 
 const router = useRouter()
 const store = useMySQLStore()
@@ -63,10 +65,18 @@ const alterForm = ref<AlterDatabaseRequest>({
   collate: '',
 })
 
-// Grant privileges form state
-const grantForm = ref<GrantPrivilegesRequest>({
+// Grant privileges form state (extended for create + grant flow)
+interface ExtendedGrantForm {
+  username: string
+  host: string
+  password: string
+  privileges: string[]
+  grant_option: boolean
+}
+
+const grantForm = ref<ExtendedGrantForm>({
   username: '',
-  user_host: '%',
+  host: '%',
   password: '',
   privileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
   grant_option: false,
@@ -244,7 +254,7 @@ function openGrantDialog(dbName: string) {
   grantDatabaseName.value = dbName
   grantForm.value = {
     username: '',
-    user_host: '%',
+    host: '%',
     password: '',
     privileges: ['SELECT', 'INSERT', 'UPDATE', 'DELETE'],
     grant_option: false,
@@ -292,6 +302,12 @@ const contextMenuOptions = computed(() => {
       icon: () => h(NIcon, null, { default: () => h(CopyOutline) }),
     },
     {
+      label: '对象管理',
+      key: 'objects',
+      icon: () => h(NIcon, null, { default: () => h(LayersOutline) }),
+      disabled: !isDatabase,
+    },
+    {
       label: '修改属性',
       key: 'alter',
       icon: () => h(NIcon, null, { default: () => h(CreateOutline) }),
@@ -331,6 +347,9 @@ function handleContextMenuSelect(key: string) {
     case 'copy':
       navigator.clipboard.writeText(databaseName)
       message.success(`已复制: ${databaseName}`)
+      break
+    case 'objects':
+      router.push(`/mysql/${databaseName}/objects`)
       break
     case 'alter':
       openAlterDialog(databaseName)
@@ -391,9 +410,14 @@ watch(() => store.currentDatabase, (newDb) => {
             <NIcon size="14"><AddOutline /></NIcon>
           </template>
         </NButton>
-        <NButton size="tiny" quaternary @click="router.push('/mysql/users')">
+        <NButton size="tiny" quaternary @click="router.push('/mysql/users')" title="Users">
           <template #icon>
             <NIcon size="14"><PersonOutline /></NIcon>
+          </template>
+        </NButton>
+        <NButton size="tiny" quaternary @click="router.push('/mysql/server')" title="Server Monitor">
+          <template #icon>
+            <NIcon size="14"><SpeedometerOutline /></NIcon>
           </template>
         </NButton>
       </NSpace>
@@ -553,7 +577,7 @@ watch(() => store.currentDatabase, (newDb) => {
         <!-- User Host -->
         <NFormItem label="主机">
           <NInput
-            v-model:value="grantForm.user_host"
+            v-model:value="grantForm.host"
             placeholder="默认 % 表示任意主机"
           />
         </NFormItem>
@@ -600,10 +624,10 @@ watch(() => store.currentDatabase, (newDb) => {
         <NFormItem label="SQL 预览">
           <div class="sql-preview">
             <code>
-              <template v-if="grantForm.password">CREATE USER IF NOT EXISTS '{{ grantForm.username }}'@'{{ grantForm.user_host }}' IDENTIFIED BY '***';</template>
+              <template v-if="grantForm.password">CREATE USER IF NOT EXISTS '{{ grantForm.username }}'@'{{ grantForm.host }}' IDENTIFIED BY '***';</template>
               GRANT {{ grantForm.privileges.join(', ') || '(请选择权限)' }}
               ON `{{ grantDatabaseName }}`.*
-              TO '{{ grantForm.username }}'@'{{ grantForm.user_host }}'
+              TO '{{ grantForm.username }}'@'{{ grantForm.host }}'
               <template v-if="grantForm.grant_option"> WITH GRANT OPTION</template>;
             </code>
           </div>

@@ -46,8 +46,35 @@ import type {
   GrantPrivilegesRequest,
   CreateUserRequest,
   UserInfo,
+  AlterUserPasswordRequest,
+  DropUserRequest,
+  RevokePrivilegesRequest,
+  UserGrantsResponse,
   CreateTableRequest,
   AlterTableRequest,
+  IndexInfo,
+  CreateIndexRequest,
+  ForeignKeyInfo,
+  CreateForeignKeyRequest,
+  ExportTableRequest,
+  ExportTableResponse,
+  ImportDataRequest,
+  ImportResult,
+  // View management types
+  ViewInfo,
+  ViewDefinition,
+  CreateViewRequest,
+  // Stored procedure types
+  ProcedureInfo,
+  ProcedureDefinition,
+  // Trigger types
+  TriggerInfo,
+  TriggerDefinition,
+  // Server monitoring types
+  ServerVariable,
+  ProcessInfo,
+  ExplainResult,
+  TableMaintenanceResult,
   UpdateRowRequest,
   SetKeyRequest,
   ExportData,
@@ -225,11 +252,6 @@ class HttpMysqlApi implements IMysqlApi {
     return response.data
   }
 
-  async grantPrivileges(name: string, data: GrantPrivilegesRequest): Promise<unknown> {
-    const response = await api.post(`/mysql/databases/${name}/grant`, data)
-    return response.data
-  }
-
   async dropDatabase(name: string): Promise<unknown> {
     const response = await api.delete(`/mysql/databases/${name}`)
     return response.data
@@ -240,14 +262,55 @@ class HttpMysqlApi implements IMysqlApi {
     return response.data
   }
 
-  async createTable(database: string, data: CreateTableRequest): Promise<unknown> {
-    const response = await api.post(`/mysql/databases/${database}/tables`, data)
+  async createTable(database: string, data: CreateTableRequest): Promise<void> {
+    await api.post(`/mysql/databases/${database}/tables`, data)
+  }
+
+  async dropTable(database: string, table: string): Promise<void> {
+    await api.delete(`/mysql/databases/${database}/tables/${table}`)
+  }
+
+  async renameTable(database: string, table: string, newName: string): Promise<void> {
+    await api.post(`/mysql/databases/${database}/tables/${table}/rename`, { new_name: newName })
+  }
+
+  async truncateTable(database: string, table: string): Promise<void> {
+    await api.post(`/mysql/databases/${database}/tables/${table}/truncate`)
+  }
+
+  async copyTable(database: string, table: string, targetName: string, withData = false): Promise<void> {
+    await api.post(`/mysql/databases/${database}/tables/${table}/copy`, {
+      target_name: targetName,
+      with_data: withData,
+    })
+  }
+
+  // Index management
+  async listIndexes(database: string, table: string): Promise<IndexInfo[]> {
+    const response = await api.get<IndexInfo[]>(`/mysql/databases/${database}/tables/${table}/indexes`)
     return response.data
   }
 
-  async dropTable(database: string, table: string): Promise<unknown> {
-    const response = await api.delete(`/mysql/databases/${database}/tables/${table}`)
+  async createIndex(database: string, table: string, data: CreateIndexRequest): Promise<void> {
+    await api.post(`/mysql/databases/${database}/tables/${table}/indexes`, data)
+  }
+
+  async dropIndex(database: string, table: string, indexName: string): Promise<void> {
+    await api.delete(`/mysql/databases/${database}/tables/${table}/indexes/${indexName}`)
+  }
+
+  // Foreign key management
+  async listForeignKeys(database: string, table: string): Promise<ForeignKeyInfo[]> {
+    const response = await api.get<ForeignKeyInfo[]>(`/mysql/databases/${database}/tables/${table}/foreign-keys`)
     return response.data
+  }
+
+  async createForeignKey(database: string, table: string, data: CreateForeignKeyRequest): Promise<void> {
+    await api.post(`/mysql/databases/${database}/tables/${table}/foreign-keys`, data)
+  }
+
+  async dropForeignKey(database: string, table: string, fkName: string): Promise<void> {
+    await api.delete(`/mysql/databases/${database}/tables/${table}/foreign-keys/${fkName}`)
   }
 
   async getTableSchema(database: string, table: string): Promise<unknown> {
@@ -260,9 +323,8 @@ class HttpMysqlApi implements IMysqlApi {
     return response.data
   }
 
-  async alterTable(database: string, table: string, data: AlterTableRequest): Promise<unknown> {
-    const response = await api.put(`/mysql/databases/${database}/tables/${table}/schema`, data)
-    return response.data
+  async alterTable(database: string, table: string, data: AlterTableRequest): Promise<void> {
+    await api.put(`/mysql/databases/${database}/tables/${table}`, data)
   }
 
   async getTablePrimaryKey(database: string, table: string): Promise<{ primary_key: string }> {
@@ -314,13 +376,19 @@ class HttpMysqlApi implements IMysqlApi {
     return response.data
   }
 
-  async exportData(database: string, table: string, format = 'json'): Promise<unknown> {
-    const response = await api.post('/mysql/export', { database, table, format })
+  async exportTable(database: string, table: string, request: ExportTableRequest): Promise<ExportTableResponse> {
+    const response = await api.post<ExportTableResponse>(
+      `/mysql/databases/${database}/tables/${table}/export`,
+      request
+    )
     return response.data
   }
 
-  async importData(database: string, table: string, rows: Record<string, unknown>[]): Promise<unknown> {
-    const response = await api.post('/mysql/import', { database, table, rows })
+  async importData(database: string, table: string, request: ImportDataRequest): Promise<ImportResult> {
+    const response = await api.post<ImportResult>(
+      `/mysql/databases/${database}/tables/${table}/import`,
+      request
+    )
     return response.data
   }
 
@@ -334,8 +402,120 @@ class HttpMysqlApi implements IMysqlApi {
     return response.data
   }
 
-  async listUserGrants(username: string, host?: string): Promise<unknown> {
-    const response = await api.get('/mysql/users/grants', { params: { username, host } })
+  async grantPrivileges(database: string, data: GrantPrivilegesRequest): Promise<void> {
+    await api.post('/mysql/users/grant', { database, ...data })
+  }
+
+  async alterUserPassword(data: AlterUserPasswordRequest): Promise<void> {
+    await api.put('/mysql/users/password', data)
+  }
+
+  async dropUser(data: DropUserRequest): Promise<void> {
+    await api.post('/mysql/users/drop', data)
+  }
+
+  async showGrants(username: string, host: string): Promise<UserGrantsResponse> {
+    const response = await api.get<UserGrantsResponse>('/mysql/users/grants', {
+      params: { username, host },
+    })
+    return response.data
+  }
+
+  async revokePrivileges(data: RevokePrivilegesRequest): Promise<void> {
+    await api.post('/mysql/users/revoke', data)
+  }
+
+  // View operations
+  async listViews(database: string): Promise<ViewInfo[]> {
+    const response = await api.get<ViewInfo[]>(`/mysql/databases/${database}/views`)
+    return response.data
+  }
+
+  async getViewDefinition(database: string, view: string): Promise<ViewDefinition> {
+    const response = await api.get<ViewDefinition>(`/mysql/databases/${database}/views/${view}`)
+    return response.data
+  }
+
+  async createView(database: string, data: CreateViewRequest): Promise<void> {
+    await api.post(`/mysql/databases/${database}/views`, data)
+  }
+
+  async dropView(database: string, view: string): Promise<void> {
+    await api.delete(`/mysql/databases/${database}/views/${view}`)
+  }
+
+  // Stored procedure operations
+  async listProcedures(database: string): Promise<ProcedureInfo[]> {
+    const response = await api.get<ProcedureInfo[]>(`/mysql/databases/${database}/procedures`)
+    return response.data
+  }
+
+  async getProcedureDefinition(database: string, name: string, routineType = 'PROCEDURE'): Promise<ProcedureDefinition> {
+    const response = await api.get<ProcedureDefinition>(`/mysql/databases/${database}/procedures/${name}`, {
+      params: { routine_type: routineType },
+    })
+    return response.data
+  }
+
+  async dropProcedure(database: string, name: string): Promise<void> {
+    await api.delete(`/mysql/databases/${database}/procedures/${name}`)
+  }
+
+  async dropFunction(database: string, name: string): Promise<void> {
+    await api.delete(`/mysql/databases/${database}/functions/${name}`)
+  }
+
+  // Trigger operations
+  async listTriggers(database: string): Promise<TriggerInfo[]> {
+    const response = await api.get<TriggerInfo[]>(`/mysql/databases/${database}/triggers`)
+    return response.data
+  }
+
+  async getTriggerDefinition(database: string, name: string): Promise<TriggerDefinition> {
+    const response = await api.get<TriggerDefinition>(`/mysql/databases/${database}/triggers/${name}`)
+    return response.data
+  }
+
+  async dropTrigger(database: string, name: string): Promise<void> {
+    await api.delete(`/mysql/databases/${database}/triggers/${name}`)
+  }
+
+  // Server monitoring operations
+  async getServerVariables(filter?: string): Promise<ServerVariable[]> {
+    const response = await api.get<ServerVariable[]>('/mysql/server/variables', {
+      params: filter ? { filter } : undefined,
+    })
+    return response.data
+  }
+
+  async getProcessList(): Promise<ProcessInfo[]> {
+    const response = await api.get<ProcessInfo[]>('/mysql/server/processes')
+    return response.data
+  }
+
+  async killProcess(processId: number): Promise<void> {
+    await api.delete(`/mysql/server/processes/${processId}`)
+  }
+
+  // Query analysis operations
+  async explainQuery(database: string, query: string): Promise<ExplainResult> {
+    const response = await api.post<ExplainResult>('/mysql/explain', { database, query })
+    return response.data
+  }
+
+  // Table maintenance operations
+  async optimizeTable(database: string, table: string): Promise<TableMaintenanceResult> {
+    const response = await api.post<TableMaintenanceResult>(`/mysql/databases/${database}/tables/${table}/optimize`)
+    return response.data
+  }
+
+  async analyzeTable(database: string, table: string): Promise<TableMaintenanceResult> {
+    const response = await api.post<TableMaintenanceResult>(`/mysql/databases/${database}/tables/${table}/analyze`)
+    return response.data
+  }
+
+  async checkTable(database: string, table: string): Promise<TableMaintenanceResult> {
+    const response = await api.post<TableMaintenanceResult>(`/mysql/databases/${database}/tables/${table}/check`)
     return response.data
   }
 }
@@ -642,6 +822,36 @@ class HttpK8sApi implements IK8sApi {
 
 // ==================== HTTP Port Forward API ====================
 
+// Backend PortForward response structure
+interface HttpPortForward {
+  id: string
+  connection_id: number
+  namespace: string
+  service_name: string
+  remote_port: number
+  local_port: number
+  status: string
+  error: string | null
+  last_used: string | null
+  created_at: string | null
+}
+
+// Transform backend response to frontend ForwardInfo
+function transformHttpPortForward(pf: HttpPortForward): ForwardInfo {
+  return {
+    id: pf.id || '',
+    connection_id: pf.connection_id,
+    local_host: '127.0.0.1',
+    local_port: pf.local_port,
+    remote_host: `${pf.service_name}.${pf.namespace}.svc.cluster.local`,
+    remote_port: pf.remote_port,
+    status: (pf.status === 'active' ? 'active' : pf.status === 'error' ? 'error' : 'idle') as 'active' | 'error' | 'idle',
+    created_at: pf.created_at || new Date().toISOString(),
+    last_used_at: pf.last_used || new Date().toISOString(),
+    error_message: pf.error || undefined,
+  }
+}
+
 class HttpPortForwardApi implements IPortForwardApi {
   async create(
     connectionId: number,
@@ -650,46 +860,49 @@ class HttpPortForwardApi implements IPortForwardApi {
     remotePort: number,
     localPort?: number
   ): Promise<ForwardInfo> {
-    const response = await api.post<ForwardInfo>('/port-forward', {
+    const response = await api.post<HttpPortForward>('/port-forward', {
       connection_id: connectionId,
       namespace,
       service_name: serviceName,
       remote_port: remotePort,
       local_port: localPort && localPort > 0 ? localPort : undefined,
     })
-    return response.data
+    return transformHttpPortForward(response.data)
   }
 
   async list(): Promise<ForwardListResponse> {
-    const response = await api.get<ForwardListResponse>('/port-forward')
-    return response.data
+    // Backend returns HttpPortForward[] directly, need to transform and wrap
+    const response = await api.get<HttpPortForward[]>('/port-forward')
+    const forwards = (response.data || []).map(transformHttpPortForward)
+    return {
+      forwards,
+      total: forwards.length,
+    }
   }
 
   async get(id: string): Promise<ForwardInfo> {
-    const response = await api.get<ForwardInfo>(`/port-forward/${id}`)
-    return response.data
+    const response = await api.get<HttpPortForward>(`/port-forward/${id}`)
+    return transformHttpPortForward(response.data)
   }
 
   async getByConnection(connectionId: number): Promise<ForwardInfo> {
-    const response = await api.get<ForwardInfo>('/port-forward/by-connection', {
-      params: { connection_id: connectionId },
-    })
-    return response.data
+    const response = await api.get<HttpPortForward>(`/port-forward/connection/${connectionId}`)
+    return transformHttpPortForward(response.data)
   }
 
   async stop(id: string): Promise<void> {
-    await api.delete(`/port-forward/${id}`)
+    await api.post(`/port-forward/${id}/stop`)
   }
 
   async reconnect(id: string, localPort?: number): Promise<ForwardInfo> {
-    const response = await api.post<ForwardInfo>(`/port-forward/${id}/reconnect`, {
+    const response = await api.post<HttpPortForward>(`/port-forward/${id}/reconnect`, {
       local_port: localPort && localPort > 0 ? localPort : undefined,
     })
-    return response.data
+    return transformHttpPortForward(response.data)
   }
 
   async touch(id: string): Promise<void> {
-    await api.put(`/port-forward/${id}/touch`)
+    await api.post(`/port-forward/${id}/touch`)
   }
 }
 

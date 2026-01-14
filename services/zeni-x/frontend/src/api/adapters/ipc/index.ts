@@ -46,8 +46,35 @@ import type {
   GrantPrivilegesRequest,
   CreateUserRequest,
   UserInfo,
+  AlterUserPasswordRequest,
+  DropUserRequest,
+  RevokePrivilegesRequest,
+  UserGrantsResponse,
   CreateTableRequest,
   AlterTableRequest,
+  IndexInfo,
+  CreateIndexRequest,
+  ForeignKeyInfo,
+  CreateForeignKeyRequest,
+  ExportTableRequest,
+  ExportTableResponse,
+  ImportDataRequest,
+  ImportResult,
+  // View management types
+  ViewInfo,
+  ViewDefinition,
+  CreateViewRequest,
+  // Stored procedure types
+  ProcedureInfo,
+  ProcedureDefinition,
+  // Trigger types
+  TriggerInfo,
+  TriggerDefinition,
+  // Server monitoring types
+  ServerVariable,
+  ProcessInfo,
+  ExplainResult,
+  TableMaintenanceResult,
   UpdateRowRequest,
   SetKeyRequest,
   ExportData,
@@ -228,15 +255,6 @@ class IpcMysqlApi implements IMysqlApi {
     }
   }
 
-  async grantPrivileges(name: string, data: GrantPrivilegesRequest): Promise<unknown> {
-    try {
-      const connectionId = this.getConnectionId()
-      return await invoke('mysql_grant_privileges', { connectionId, database: name, data })
-    } catch (error) {
-      handleInvokeError(error)
-    }
-  }
-
   async dropDatabase(name: string): Promise<unknown> {
     try {
       const connectionId = this.getConnectionId()
@@ -255,15 +273,104 @@ class IpcMysqlApi implements IMysqlApi {
     }
   }
 
-  async createTable(_database: string, _data: CreateTableRequest): Promise<unknown> {
-    // Table creation via schema not implemented in Rust backend yet
-    throw new Error('Table creation not implemented in IPC adapter')
-  }
-
-  async dropTable(database: string, table: string): Promise<unknown> {
+  async createTable(database: string, data: CreateTableRequest): Promise<void> {
     try {
       const connectionId = this.getConnectionId()
-      return await invoke('mysql_drop_table', { connectionId, database, table })
+      await invoke('mysql_create_table', { connectionId, database, data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async dropTable(database: string, table: string): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_drop_table', { connectionId, database, table })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async renameTable(database: string, table: string, newName: string): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_rename_table', { connectionId, database, table, data: { new_name: newName } })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async truncateTable(database: string, table: string): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_truncate_table', { connectionId, database, table })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async copyTable(database: string, table: string, targetName: string, withData = false): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_copy_table', { connectionId, database, table, data: { target_name: targetName, with_data: withData } })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  // Index management
+  async listIndexes(database: string, table: string): Promise<IndexInfo[]> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke('mysql_list_indexes', { connectionId, database, table })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+    return []
+  }
+
+  async createIndex(database: string, table: string, data: CreateIndexRequest): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_create_index', { connectionId, database, table, data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async dropIndex(database: string, table: string, indexName: string): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_drop_index', { connectionId, database, table, indexName })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  // Foreign key management
+  async listForeignKeys(database: string, table: string): Promise<ForeignKeyInfo[]> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke('mysql_list_foreign_keys', { connectionId, database, table })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+    return []
+  }
+
+  async createForeignKey(database: string, table: string, data: CreateForeignKeyRequest): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_create_foreign_key', { connectionId, database, table, data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async dropForeignKey(database: string, table: string, fkName: string): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_drop_foreign_key', { connectionId, database, table, fkName })
     } catch (error) {
       handleInvokeError(error)
     }
@@ -283,9 +390,13 @@ class IpcMysqlApi implements IMysqlApi {
     throw new Error('Database schema not implemented in IPC adapter')
   }
 
-  async alterTable(_database: string, _table: string, _data: AlterTableRequest): Promise<unknown> {
-    // Alter table not implemented in Rust backend yet
-    throw new Error('Alter table not implemented in IPC adapter')
+  async alterTable(database: string, table: string, data: AlterTableRequest): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_alter_table', { connectionId, database, table, data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
   async getTablePrimaryKey(database: string, table: string): Promise<{ primary_key: string }> {
@@ -354,14 +465,32 @@ class IpcMysqlApi implements IMysqlApi {
     }
   }
 
-  async exportData(_database: string, _table: string, _format?: string): Promise<unknown> {
-    // Export not implemented in Rust backend yet
-    throw new Error('Export data not implemented in IPC adapter')
+  async exportTable(database: string, table: string, request: ExportTableRequest): Promise<ExportTableResponse> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<ExportTableResponse>('mysql_export_table', {
+        connectionId,
+        database,
+        table,
+        data: request,
+      })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
-  async importData(_database: string, _table: string, _rows: Record<string, unknown>[]): Promise<unknown> {
-    // Import not implemented in Rust backend yet
-    throw new Error('Import data not implemented in IPC adapter')
+  async importData(database: string, table: string, request: ImportDataRequest): Promise<ImportResult> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<ImportResult>('mysql_import_data', {
+        connectionId,
+        database,
+        table,
+        data: request,
+      })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 
   async listUsers(): Promise<UserInfo[]> {
@@ -382,9 +511,226 @@ class IpcMysqlApi implements IMysqlApi {
     }
   }
 
-  async listUserGrants(_username: string, _host?: string): Promise<unknown> {
-    // List grants not implemented in Rust backend yet
-    throw new Error('List user grants not implemented in IPC adapter')
+  async grantPrivileges(database: string, data: GrantPrivilegesRequest): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_grant_privileges', { connectionId, database, data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async alterUserPassword(data: AlterUserPasswordRequest): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_alter_user_password', { connectionId, data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async dropUser(data: DropUserRequest): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_drop_user', { connectionId, data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async showGrants(username: string, host: string): Promise<UserGrantsResponse> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<UserGrantsResponse>('mysql_show_grants', {
+        connectionId,
+        username,
+        host,
+      })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async revokePrivileges(data: RevokePrivilegesRequest): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_revoke_privileges', { connectionId, data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  // View operations
+  async listViews(database: string): Promise<ViewInfo[]> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<ViewInfo[]>('mysql_list_views', { connectionId, database })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async getViewDefinition(database: string, view: string): Promise<ViewDefinition> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<ViewDefinition>('mysql_get_view_definition', { connectionId, database, view })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async createView(database: string, data: CreateViewRequest): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_create_view', { connectionId, database, data })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async dropView(database: string, view: string): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_drop_view', { connectionId, database, view })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  // Stored procedure operations
+  async listProcedures(database: string): Promise<ProcedureInfo[]> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<ProcedureInfo[]>('mysql_list_procedures', { connectionId, database })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async getProcedureDefinition(database: string, name: string, routineType = 'PROCEDURE'): Promise<ProcedureDefinition> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<ProcedureDefinition>('mysql_get_procedure_definition', {
+        connectionId,
+        database,
+        name,
+        routineType,
+      })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async dropProcedure(database: string, name: string): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_drop_procedure', { connectionId, database, name })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async dropFunction(database: string, name: string): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_drop_function', { connectionId, database, name })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  // Trigger operations
+  async listTriggers(database: string): Promise<TriggerInfo[]> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<TriggerInfo[]>('mysql_list_triggers', { connectionId, database })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async getTriggerDefinition(database: string, name: string): Promise<TriggerDefinition> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<TriggerDefinition>('mysql_get_trigger_definition', { connectionId, database, name })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async dropTrigger(database: string, name: string): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_drop_trigger', { connectionId, database, name })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  // Server monitoring operations
+  async getServerVariables(filter?: string): Promise<ServerVariable[]> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<ServerVariable[]>('mysql_get_server_variables', { connectionId, filter })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async getProcessList(): Promise<ProcessInfo[]> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<ProcessInfo[]>('mysql_get_process_list', { connectionId })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async killProcess(processId: number): Promise<void> {
+    try {
+      const connectionId = this.getConnectionId()
+      await invoke('mysql_kill_process', { connectionId, processId })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  // Query analysis operations
+  async explainQuery(database: string, query: string): Promise<ExplainResult> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<ExplainResult>('mysql_explain_query', { connectionId, database, query })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  // Table maintenance operations
+  async optimizeTable(database: string, table: string): Promise<TableMaintenanceResult> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<TableMaintenanceResult>('mysql_optimize_table', { connectionId, database, table })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async analyzeTable(database: string, table: string): Promise<TableMaintenanceResult> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<TableMaintenanceResult>('mysql_analyze_table', { connectionId, database, table })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async checkTable(database: string, table: string): Promise<TableMaintenanceResult> {
+    try {
+      const connectionId = this.getConnectionId()
+      return await invoke<TableMaintenanceResult>('mysql_check_table', { connectionId, database, table })
+    } catch (error) {
+      handleInvokeError(error)
+    }
   }
 }
 

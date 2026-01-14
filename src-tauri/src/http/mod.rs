@@ -22,13 +22,19 @@ use tokio::sync::RwLock;
 use tower_http::cors::{Any, CorsLayer};
 
 use crate::db::models::{
-    AddQueryHistoryRequest, Cluster, Connection, CreateDatabaseRequest, CreateSavedQueryRequest,
-    DiscoveredService, ImportConnectionResult, ImportConnectionsRequest, ImportConnectionsResponse,
-    ListClustersResponse, MysqlDatabase, MysqlQueryResult, MysqlServerInfo, MysqlTable,
-    MysqlTableData, MysqlTableSchema, PortForward, QueryHistory, QueryHistoryListResponse,
-    RedisKeyListResponse, RedisKeyValue, RedisServerInfo, SavedQuery, SetKeyRequest,
-    TestConnectionRequest, TestConnectionResult, TestK8sConnectionRequest, UpdateConnectionRequest,
-    UpdateSavedQueryRequest,
+    AddQueryHistoryRequest, AlterTableRequest, AlterUserPasswordRequest, Cluster, Connection,
+    CopyTableRequest, CreateDatabaseRequest, CreateForeignKeyRequest, CreateIndexRequest,
+    CreateSavedQueryRequest, CreateTableRequest, CreateUserRequest, CreateViewRequest,
+    DiscoveredService, DropUserRequest, ExplainResult, ExportTableRequest, ExportTableResponse,
+    ForeignKeyInfo, GrantPrivilegesRequest, ImportConnectionResult, ImportConnectionsRequest,
+    ImportConnectionsResponse, ImportDataRequest, ImportResult, IndexInfo, ListClustersResponse,
+    MysqlDatabase, MysqlQueryResult, MysqlServerInfo, MysqlTable, MysqlTableData, MysqlTableSchema,
+    MysqlUserInfo, PortForward, ProcedureDefinition, ProcedureInfo, ProcessInfo, QueryHistory,
+    QueryHistoryListResponse, RedisKeyListResponse, RedisKeyValue, RedisServerInfo, RenameTableRequest,
+    RevokePrivilegesRequest, SavedQuery, ServerVariable, SetKeyRequest, TableMaintenanceResult,
+    TestConnectionRequest, TestConnectionResult, TestK8sConnectionRequest, TriggerDefinition,
+    TriggerInfo, UpdateConnectionRequest, UpdateSavedQueryRequest, UserGrantsResponse,
+    ViewDefinition, ViewInfo,
 };
 use crate::db::SqlitePool;
 use crate::error::AppError;
@@ -119,6 +125,55 @@ pub fn create_router(pool: SqlitePool, pf_service: PortForwardService) -> Router
         .route("/api/mysql/databases/:db/tables/:table/rows", put(mysql_update_record))
         .route("/api/mysql/databases/:db/tables/:table/rows", delete(mysql_delete_row))
         .route("/api/mysql/query", post(mysql_execute_query))
+        // MySQL table management routes
+        .route("/api/mysql/databases/:db/tables", post(mysql_create_table))
+        .route("/api/mysql/databases/:db/tables/:table", put(mysql_alter_table))
+        .route("/api/mysql/databases/:db/tables/:table/rename", post(mysql_rename_table))
+        .route("/api/mysql/databases/:db/tables/:table/truncate", post(mysql_truncate_table))
+        .route("/api/mysql/databases/:db/tables/:table/copy", post(mysql_copy_table))
+        // MySQL index management routes
+        .route("/api/mysql/databases/:db/tables/:table/indexes", get(mysql_list_indexes))
+        .route("/api/mysql/databases/:db/tables/:table/indexes", post(mysql_create_index))
+        .route("/api/mysql/databases/:db/tables/:table/indexes/:index", delete(mysql_drop_index))
+        // MySQL foreign key management routes
+        .route("/api/mysql/databases/:db/tables/:table/foreign-keys", get(mysql_list_foreign_keys))
+        .route("/api/mysql/databases/:db/tables/:table/foreign-keys", post(mysql_create_foreign_key))
+        .route("/api/mysql/databases/:db/tables/:table/foreign-keys/:fk", delete(mysql_drop_foreign_key))
+        // MySQL data export/import routes
+        .route("/api/mysql/databases/:db/tables/:table/export", post(mysql_export_table))
+        .route("/api/mysql/databases/:db/tables/:table/import", post(mysql_import_data))
+        // MySQL user management routes
+        .route("/api/mysql/users", get(mysql_list_users))
+        .route("/api/mysql/users", post(mysql_create_user))
+        .route("/api/mysql/users/password", put(mysql_alter_user_password))
+        .route("/api/mysql/users/drop", post(mysql_drop_user))
+        .route("/api/mysql/users/grants", get(mysql_show_grants))
+        .route("/api/mysql/users/grant", post(mysql_grant_privileges))
+        .route("/api/mysql/users/revoke", post(mysql_revoke_privileges))
+        // MySQL view management routes
+        .route("/api/mysql/databases/:db/views", get(mysql_list_views))
+        .route("/api/mysql/databases/:db/views", post(mysql_create_view))
+        .route("/api/mysql/databases/:db/views/:view", get(mysql_get_view_definition))
+        .route("/api/mysql/databases/:db/views/:view", delete(mysql_drop_view))
+        // MySQL stored procedure management routes
+        .route("/api/mysql/databases/:db/procedures", get(mysql_list_procedures))
+        .route("/api/mysql/databases/:db/procedures/:name", get(mysql_get_procedure_definition))
+        .route("/api/mysql/databases/:db/procedures/:name", delete(mysql_drop_procedure))
+        .route("/api/mysql/databases/:db/functions/:name", delete(mysql_drop_function))
+        // MySQL trigger management routes
+        .route("/api/mysql/databases/:db/triggers", get(mysql_list_triggers))
+        .route("/api/mysql/databases/:db/triggers/:name", get(mysql_get_trigger_definition))
+        .route("/api/mysql/databases/:db/triggers/:name", delete(mysql_drop_trigger))
+        // MySQL server monitoring routes
+        .route("/api/mysql/server/variables", get(mysql_get_server_variables))
+        .route("/api/mysql/server/processes", get(mysql_get_process_list))
+        .route("/api/mysql/server/processes/:id", delete(mysql_kill_process))
+        // MySQL query analysis routes
+        .route("/api/mysql/explain", post(mysql_explain_query))
+        // MySQL table maintenance routes
+        .route("/api/mysql/databases/:db/tables/:table/optimize", post(mysql_optimize_table))
+        .route("/api/mysql/databases/:db/tables/:table/analyze", post(mysql_analyze_table))
+        .route("/api/mysql/databases/:db/tables/:table/check", post(mysql_check_table))
         // Redis routes
         .route("/api/redis/info", get(redis_get_info))
         .route("/api/redis/keys", get(redis_list_keys))
@@ -1105,6 +1160,634 @@ async fn mysql_execute_query(
     let connection = ensure_port_forward_for_http(&state, connection).await?;
     let mysql_service = MysqlService::connect(&connection).await?;
     let result = mysql_service.execute_query(&req.database, &req.query).await?;
+    Ok(Json(result))
+}
+
+// ==================== MySQL Table Management Handlers ====================
+
+async fn mysql_create_table(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path(db): Path<String>,
+    Json(req): Json<CreateTableRequest>,
+) -> Result<Json<()>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.create_table(&db, &req).await?;
+    Ok(Json(()))
+}
+
+async fn mysql_alter_table(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path((db, table)): Path<(String, String)>,
+    Json(req): Json<AlterTableRequest>,
+) -> Result<Json<()>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.alter_table(&db, &table, &req).await?;
+    Ok(Json(()))
+}
+
+async fn mysql_rename_table(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path((db, table)): Path<(String, String)>,
+    Json(req): Json<RenameTableRequest>,
+) -> Result<Json<()>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.rename_table(&db, &table, &req.new_name).await?;
+    Ok(Json(()))
+}
+
+async fn mysql_truncate_table(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path((db, table)): Path<(String, String)>,
+) -> Result<Json<()>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.truncate_table(&db, &table).await?;
+    Ok(Json(()))
+}
+
+async fn mysql_copy_table(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path((db, table)): Path<(String, String)>,
+    Json(req): Json<CopyTableRequest>,
+) -> Result<Json<()>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.copy_table(&db, &table, &req.target_name, req.with_data).await?;
+    Ok(Json(()))
+}
+
+// ==================== MySQL Index handlers ====================
+
+async fn mysql_list_indexes(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path((db, table)): Path<(String, String)>,
+) -> Result<Json<Vec<IndexInfo>>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let indexes = mysql_service.list_indexes(&db, &table).await?;
+    Ok(Json(indexes))
+}
+
+async fn mysql_create_index(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path((db, table)): Path<(String, String)>,
+    Json(req): Json<CreateIndexRequest>,
+) -> Result<Json<()>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.create_index(&db, &table, &req).await?;
+    Ok(Json(()))
+}
+
+async fn mysql_drop_index(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path((db, table, index)): Path<(String, String, String)>,
+) -> Result<Json<()>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.drop_index(&db, &table, &index).await?;
+    Ok(Json(()))
+}
+
+// ==================== MySQL Foreign Key handlers ====================
+
+async fn mysql_list_foreign_keys(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path((db, table)): Path<(String, String)>,
+) -> Result<Json<Vec<ForeignKeyInfo>>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let fks = mysql_service.list_foreign_keys(&db, &table).await?;
+    Ok(Json(fks))
+}
+
+async fn mysql_create_foreign_key(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path((db, table)): Path<(String, String)>,
+    Json(req): Json<CreateForeignKeyRequest>,
+) -> Result<Json<()>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.create_foreign_key(&db, &table, &req).await?;
+    Ok(Json(()))
+}
+
+async fn mysql_drop_foreign_key(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path((db, table, fk)): Path<(String, String, String)>,
+) -> Result<Json<()>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.drop_foreign_key(&db, &table, &fk).await?;
+    Ok(Json(()))
+}
+
+// ==================== MySQL Data Export/Import handlers ====================
+
+async fn mysql_export_table(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path((db, table)): Path<(String, String)>,
+    Json(req): Json<ExportTableRequest>,
+) -> Result<Json<ExportTableResponse>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let response = mysql_service.export_table(&db, &table, &req).await?;
+    Ok(Json(response))
+}
+
+async fn mysql_import_data(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Path((db, table)): Path<(String, String)>,
+    Json(req): Json<ImportDataRequest>,
+) -> Result<Json<ImportResult>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let result = mysql_service.import_data(&db, &table, &req).await?;
+    Ok(Json(result))
+}
+
+// ==================== MySQL User Management handlers ====================
+
+async fn mysql_list_users(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<MysqlUserInfo>>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let users = mysql_service.list_users().await?;
+    Ok(Json(users))
+}
+
+async fn mysql_create_user(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Json(req): Json<CreateUserRequest>,
+) -> Result<StatusCode, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.create_user(&req).await?;
+    Ok(StatusCode::CREATED)
+}
+
+async fn mysql_alter_user_password(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Json(req): Json<AlterUserPasswordRequest>,
+) -> Result<StatusCode, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.alter_user_password(&req).await?;
+    Ok(StatusCode::OK)
+}
+
+async fn mysql_drop_user(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Json(req): Json<DropUserRequest>,
+) -> Result<StatusCode, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.drop_user(&req).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+#[derive(Deserialize)]
+struct ShowGrantsQuery {
+    connection_id: Option<i64>,
+    username: String,
+    host: String,
+}
+
+async fn mysql_show_grants(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ShowGrantsQuery>,
+    headers: HeaderMap,
+) -> Result<Json<UserGrantsResponse>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let grants = mysql_service.show_grants(&params.username, &params.host).await?;
+    Ok(Json(grants))
+}
+
+#[derive(Deserialize)]
+struct GrantPrivilegesHttpRequest {
+    database: String,
+    #[serde(flatten)]
+    grant: GrantPrivilegesRequest,
+}
+
+async fn mysql_grant_privileges(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Json(req): Json<GrantPrivilegesHttpRequest>,
+) -> Result<StatusCode, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.grant_privileges(&req.database, &req.grant).await?;
+    Ok(StatusCode::OK)
+}
+
+async fn mysql_revoke_privileges(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Json(req): Json<RevokePrivilegesRequest>,
+) -> Result<StatusCode, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.revoke_privileges(&req).await?;
+    Ok(StatusCode::OK)
+}
+
+// ==================== MySQL View handlers ====================
+
+async fn mysql_list_views(
+    State(state): State<Arc<AppState>>,
+    Path(db): Path<String>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ViewInfo>>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let views = mysql_service.list_views(&db).await?;
+    Ok(Json(views))
+}
+
+async fn mysql_get_view_definition(
+    State(state): State<Arc<AppState>>,
+    Path((db, view)): Path<(String, String)>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<Json<ViewDefinition>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let definition = mysql_service.get_view_definition(&db, &view).await?;
+    Ok(Json(definition))
+}
+
+async fn mysql_create_view(
+    State(state): State<Arc<AppState>>,
+    Path(db): Path<String>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+    Json(req): Json<CreateViewRequest>,
+) -> Result<StatusCode, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.create_view(&db, &req).await?;
+    Ok(StatusCode::CREATED)
+}
+
+async fn mysql_drop_view(
+    State(state): State<Arc<AppState>>,
+    Path((db, view)): Path<(String, String)>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<StatusCode, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.drop_view(&db, &view).await?;
+    Ok(StatusCode::OK)
+}
+
+// ==================== MySQL Procedure handlers ====================
+
+#[derive(Deserialize)]
+struct ProcedureQuery {
+    connection_id: Option<i64>,
+    routine_type: Option<String>,
+}
+
+async fn mysql_list_procedures(
+    State(state): State<Arc<AppState>>,
+    Path(db): Path<String>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ProcedureInfo>>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let procedures = mysql_service.list_procedures(&db).await?;
+    Ok(Json(procedures))
+}
+
+async fn mysql_get_procedure_definition(
+    State(state): State<Arc<AppState>>,
+    Path((db, name)): Path<(String, String)>,
+    Query(params): Query<ProcedureQuery>,
+    headers: HeaderMap,
+) -> Result<Json<ProcedureDefinition>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let routine_type = params.routine_type.unwrap_or_else(|| "PROCEDURE".to_string());
+    let definition = mysql_service.get_procedure_definition(&db, &name, &routine_type).await?;
+    Ok(Json(definition))
+}
+
+async fn mysql_drop_procedure(
+    State(state): State<Arc<AppState>>,
+    Path((db, name)): Path<(String, String)>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<StatusCode, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.drop_procedure(&db, &name).await?;
+    Ok(StatusCode::OK)
+}
+
+async fn mysql_drop_function(
+    State(state): State<Arc<AppState>>,
+    Path((db, name)): Path<(String, String)>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<StatusCode, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.drop_function(&db, &name).await?;
+    Ok(StatusCode::OK)
+}
+
+// ==================== MySQL Trigger handlers ====================
+
+async fn mysql_list_triggers(
+    State(state): State<Arc<AppState>>,
+    Path(db): Path<String>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<TriggerInfo>>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let triggers = mysql_service.list_triggers(&db).await?;
+    Ok(Json(triggers))
+}
+
+async fn mysql_get_trigger_definition(
+    State(state): State<Arc<AppState>>,
+    Path((db, name)): Path<(String, String)>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<Json<TriggerDefinition>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let definition = mysql_service.get_trigger_definition(&db, &name).await?;
+    Ok(Json(definition))
+}
+
+async fn mysql_drop_trigger(
+    State(state): State<Arc<AppState>>,
+    Path((db, name)): Path<(String, String)>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<StatusCode, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.drop_trigger(&db, &name).await?;
+    Ok(StatusCode::OK)
+}
+
+// ==================== MySQL Server Monitoring handlers ====================
+
+#[derive(Deserialize)]
+struct ServerVariablesQuery {
+    connection_id: Option<i64>,
+    filter: Option<String>,
+}
+
+async fn mysql_get_server_variables(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ServerVariablesQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ServerVariable>>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let variables = mysql_service.get_server_variables(params.filter.as_deref()).await?;
+    Ok(Json(variables))
+}
+
+async fn mysql_get_process_list(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ProcessInfo>>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let processes = mysql_service.get_process_list().await?;
+    Ok(Json(processes))
+}
+
+async fn mysql_kill_process(
+    State(state): State<Arc<AppState>>,
+    Path(process_id): Path<u64>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<StatusCode, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    mysql_service.kill_process(process_id).await?;
+    Ok(StatusCode::OK)
+}
+
+// ==================== MySQL Query Analysis handlers ====================
+
+#[derive(Deserialize)]
+struct ExplainRequest {
+    connection_id: i64,
+    database: String,
+    query: String,
+}
+
+async fn mysql_explain_query(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<ExplainRequest>,
+) -> Result<Json<ExplainResult>, AppError> {
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(req.connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let result = mysql_service.explain_query(&req.database, &req.query).await?;
+    Ok(Json(result))
+}
+
+// ==================== MySQL Table Maintenance handlers ====================
+
+async fn mysql_optimize_table(
+    State(state): State<Arc<AppState>>,
+    Path((db, table)): Path<(String, String)>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<Json<TableMaintenanceResult>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let result = mysql_service.optimize_table(&db, &table).await?;
+    Ok(Json(result))
+}
+
+async fn mysql_analyze_table(
+    State(state): State<Arc<AppState>>,
+    Path((db, table)): Path<(String, String)>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<Json<TableMaintenanceResult>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let result = mysql_service.analyze_table(&db, &table).await?;
+    Ok(Json(result))
+}
+
+async fn mysql_check_table(
+    State(state): State<Arc<AppState>>,
+    Path((db, table)): Path<(String, String)>,
+    Query(params): Query<ConnectionIdQuery>,
+    headers: HeaderMap,
+) -> Result<Json<TableMaintenanceResult>, AppError> {
+    let connection_id = extract_connection_id(params.connection_id, &headers)?;
+    let conn_service = ConnectionService::new(state.pool.clone());
+    let connection = conn_service.get_by_id(connection_id).await?;
+    let connection = ensure_port_forward_for_http(&state, connection).await?;
+    let mysql_service = MysqlService::connect(&connection).await?;
+    let result = mysql_service.check_table(&db, &table).await?;
     Ok(Json(result))
 }
 

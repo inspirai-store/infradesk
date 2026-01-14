@@ -38,6 +38,17 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/mysql/TableData.vue'),
       },
       {
+        path: ':database/objects',
+        name: 'MySQLObjects',
+        component: () => import('@/views/mysql/components/DatabaseObjectsView.vue'),
+        props: true,
+      },
+      {
+        path: 'server',
+        name: 'MySQLServer',
+        component: () => import('@/views/mysql/ServerMonitorView.vue'),
+      },
+      {
         path: 'query',
         name: 'MySQLQuery',
         component: () => import('@/views/mysql/QueryEditor.vue'),

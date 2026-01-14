@@ -9,9 +9,14 @@ use tauri::State;
 
 use crate::commands::PortForwardState;
 use crate::db::models::{
-    AlterDatabaseRequest, Connection, CreateDatabaseRequest, CreateUserRequest,
-    GrantPrivilegesRequest, MysqlDatabase, MysqlQueryResult, MysqlServerInfo, MysqlTable,
-    MysqlTableData, MysqlTableSchema, MysqlUserInfo,
+    AlterDatabaseRequest, AlterTableRequest, AlterUserPasswordRequest, Connection,
+    CopyTableRequest, CreateDatabaseRequest, CreateForeignKeyRequest, CreateIndexRequest,
+    CreateTableRequest, CreateUserRequest, CreateViewRequest, DropUserRequest, ExportFormat,
+    ExportTableRequest, ExportTableResponse, ExplainResult, ForeignKeyInfo, GrantPrivilegesRequest,
+    ImportDataRequest, ImportResult, IndexInfo, MysqlDatabase, MysqlQueryResult, MysqlServerInfo,
+    MysqlTable, MysqlTableData, MysqlTableSchema, MysqlUserInfo, ProcedureDefinition, ProcedureInfo,
+    ProcessInfo, RenameTableRequest, RevokePrivilegesRequest, ServerVariable, TableMaintenanceResult,
+    TriggerDefinition, TriggerInfo, UserGrantsResponse, ViewDefinition, ViewInfo,
 };
 use crate::db::SqlitePool;
 use crate::error::AppError;
@@ -315,4 +320,513 @@ pub async fn mysql_grant_privileges(
 ) -> Result<(), AppError> {
     let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
     mysql.grant_privileges(&database, &data).await
+}
+
+/// Alter user password
+#[tauri::command]
+pub async fn mysql_alter_user_password(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    data: AlterUserPasswordRequest,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.alter_user_password(&data).await
+}
+
+/// Drop a MySQL user
+#[tauri::command]
+pub async fn mysql_drop_user(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    data: DropUserRequest,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.drop_user(&data).await
+}
+
+/// Show grants for a user
+#[tauri::command]
+pub async fn mysql_show_grants(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    username: String,
+    host: String,
+) -> Result<UserGrantsResponse, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.show_grants(&username, &host).await
+}
+
+/// Revoke privileges from a user
+#[tauri::command]
+pub async fn mysql_revoke_privileges(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    data: RevokePrivilegesRequest,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.revoke_privileges(&data).await
+}
+
+// ==================== Table Management Commands ====================
+
+/// Create a new table
+#[tauri::command]
+pub async fn mysql_create_table(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    data: CreateTableRequest,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.create_table(&database, &data).await
+}
+
+/// Alter an existing table
+#[tauri::command]
+pub async fn mysql_alter_table(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+    data: AlterTableRequest,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.alter_table(&database, &table, &data).await
+}
+
+/// Rename a table
+#[tauri::command]
+pub async fn mysql_rename_table(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+    data: RenameTableRequest,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.rename_table(&database, &table, &data.new_name).await
+}
+
+/// Truncate a table (delete all rows, reset auto-increment)
+#[tauri::command]
+pub async fn mysql_truncate_table(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.truncate_table(&database, &table).await
+}
+
+/// Copy a table (structure only or with data)
+#[tauri::command]
+pub async fn mysql_copy_table(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+    data: CopyTableRequest,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql
+        .copy_table(&database, &table, &data.target_name, data.with_data)
+        .await
+}
+
+// ==================== Index Management ====================
+
+/// List all indexes on a table
+#[tauri::command]
+pub async fn mysql_list_indexes(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+) -> Result<Vec<IndexInfo>, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.list_indexes(&database, &table).await
+}
+
+/// Create an index on a table
+#[tauri::command]
+pub async fn mysql_create_index(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+    data: CreateIndexRequest,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.create_index(&database, &table, &data).await
+}
+
+/// Drop an index from a table
+#[tauri::command]
+pub async fn mysql_drop_index(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+    index_name: String,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.drop_index(&database, &table, &index_name).await
+}
+
+// ==================== Foreign Key Management ====================
+
+/// List all foreign keys on a table
+#[tauri::command]
+pub async fn mysql_list_foreign_keys(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+) -> Result<Vec<ForeignKeyInfo>, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.list_foreign_keys(&database, &table).await
+}
+
+/// Create a foreign key on a table
+#[tauri::command]
+pub async fn mysql_create_foreign_key(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+    data: CreateForeignKeyRequest,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.create_foreign_key(&database, &table, &data).await
+}
+
+/// Drop a foreign key from a table
+#[tauri::command]
+pub async fn mysql_drop_foreign_key(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+    fk_name: String,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.drop_foreign_key(&database, &table, &fk_name).await
+}
+
+// ==================== Data Export ====================
+
+/// Export table data to specified format (CSV, JSON, SQL)
+#[tauri::command]
+pub async fn mysql_export_table(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+    data: ExportTableRequest,
+) -> Result<ExportTableResponse, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+
+    let columns = data.columns.as_ref().map(|v| v.as_slice());
+    let where_clause = data.where_clause.as_deref();
+
+    match data.format {
+        ExportFormat::Csv => {
+            mysql.export_table_csv(
+                &database,
+                &table,
+                columns,
+                where_clause,
+                data.limit,
+                data.include_headers,
+            ).await
+        }
+        ExportFormat::Json => {
+            mysql.export_table_json(&database, &table, columns, where_clause, data.limit).await
+        }
+        ExportFormat::Sql => {
+            mysql.export_table_sql(&database, &table, columns, where_clause, data.limit).await
+        }
+    }
+}
+
+// ==================== Data Import ====================
+
+/// Import data into a table
+#[tauri::command]
+pub async fn mysql_import_data(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+    data: ImportDataRequest,
+) -> Result<ImportResult, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+
+    match data.format.as_str() {
+        "csv" => {
+            mysql.import_csv(&database, &table, &data.data, data.skip_rows, &data.on_duplicate).await
+        }
+        "json" => {
+            mysql.import_json(&database, &table, &data.data, &data.on_duplicate).await
+        }
+        _ => Err(AppError::Validation(format!("Unsupported import format: {}", data.format))),
+    }
+}
+
+// ==================== View Management ====================
+
+/// List all views in a database
+#[tauri::command]
+pub async fn mysql_list_views(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+) -> Result<Vec<ViewInfo>, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.list_views(&database).await
+}
+
+/// Get view definition
+#[tauri::command]
+pub async fn mysql_get_view_definition(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    view: String,
+) -> Result<ViewDefinition, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.get_view_definition(&database, &view).await
+}
+
+/// Create a new view
+#[tauri::command]
+pub async fn mysql_create_view(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    data: CreateViewRequest,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.create_view(&database, &data).await
+}
+
+/// Drop a view
+#[tauri::command]
+pub async fn mysql_drop_view(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    view: String,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.drop_view(&database, &view).await
+}
+
+// ==================== Stored Procedure Management ====================
+
+/// List all stored procedures and functions in a database
+#[tauri::command]
+pub async fn mysql_list_procedures(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+) -> Result<Vec<ProcedureInfo>, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.list_procedures(&database).await
+}
+
+/// Get stored procedure/function definition
+#[tauri::command]
+pub async fn mysql_get_procedure_definition(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    name: String,
+    routine_type: String,
+) -> Result<ProcedureDefinition, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.get_procedure_definition(&database, &name, &routine_type).await
+}
+
+/// Drop a stored procedure
+#[tauri::command]
+pub async fn mysql_drop_procedure(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    name: String,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.drop_procedure(&database, &name).await
+}
+
+/// Drop a function
+#[tauri::command]
+pub async fn mysql_drop_function(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    name: String,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.drop_function(&database, &name).await
+}
+
+// ==================== Trigger Management ====================
+
+/// List all triggers in a database
+#[tauri::command]
+pub async fn mysql_list_triggers(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+) -> Result<Vec<TriggerInfo>, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.list_triggers(&database).await
+}
+
+/// Get trigger definition
+#[tauri::command]
+pub async fn mysql_get_trigger_definition(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    name: String,
+) -> Result<TriggerDefinition, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.get_trigger_definition(&database, &name).await
+}
+
+/// Drop a trigger
+#[tauri::command]
+pub async fn mysql_drop_trigger(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    name: String,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.drop_trigger(&database, &name).await
+}
+
+// ==================== Server Monitoring ====================
+
+/// Get server variables
+#[tauri::command]
+pub async fn mysql_get_server_variables(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    filter: Option<String>,
+) -> Result<Vec<ServerVariable>, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.get_server_variables(filter.as_deref()).await
+}
+
+/// Get process list
+#[tauri::command]
+pub async fn mysql_get_process_list(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+) -> Result<Vec<ProcessInfo>, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.get_process_list().await
+}
+
+/// Kill a process
+#[tauri::command]
+pub async fn mysql_kill_process(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    process_id: u64,
+) -> Result<(), AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.kill_process(process_id).await
+}
+
+// ==================== Query Analysis ====================
+
+/// Explain a query
+#[tauri::command]
+pub async fn mysql_explain_query(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    query: String,
+) -> Result<ExplainResult, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.explain_query(&database, &query).await
+}
+
+// ==================== Table Maintenance ====================
+
+/// Optimize a table
+#[tauri::command]
+pub async fn mysql_optimize_table(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+) -> Result<TableMaintenanceResult, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.optimize_table(&database, &table).await
+}
+
+/// Analyze a table
+#[tauri::command]
+pub async fn mysql_analyze_table(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+) -> Result<TableMaintenanceResult, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.analyze_table(&database, &table).await
+}
+
+/// Check a table
+#[tauri::command]
+pub async fn mysql_check_table(
+    pool: State<'_, SqlitePool>,
+    pf_state: State<'_, PortForwardState>,
+    connection_id: i64,
+    database: String,
+    table: String,
+) -> Result<TableMaintenanceResult, AppError> {
+    let mysql = get_mysql_service(pool.inner(), &pf_state, connection_id).await?;
+    mysql.check_table(&database, &table).await
 }
