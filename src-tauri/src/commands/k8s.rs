@@ -255,7 +255,8 @@ pub async fn k8s_import_connections(
 /// Helper to get K8sService from cluster_id
 async fn get_k8s_service(pool: &SqlitePool, cluster_id: i64) -> Result<K8sService, AppError> {
     let cluster_service = ClusterService::new(pool.clone());
-    let cluster = cluster_service.get_by_id(cluster_id).await?;
+    // Use get_with_kubeconfig instead of get_by_id, because get_by_id clears kubeconfig for security
+    let cluster = cluster_service.get_with_kubeconfig(cluster_id).await?;
 
     let kubeconfig = cluster.kubeconfig.ok_or_else(|| {
         AppError::K8s("Cluster has no kubeconfig".to_string())
