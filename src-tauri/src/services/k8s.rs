@@ -1000,4 +1000,104 @@ impl K8sService {
             })
             .collect())
     }
+
+    // ==================== Deployment Operations ====================
+
+    /// Get Deployment as YAML string
+    pub async fn get_deployment_yaml(&self, namespace: &str, name: &str) -> AppResult<String> {
+        let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
+        let deployment = deployments
+            .get(name)
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to get deployment: {}", e)))?;
+
+        serde_yaml::to_string(&deployment)
+            .map_err(|e| AppError::K8s(format!("Failed to serialize deployment to YAML: {}", e)))
+    }
+
+    /// Update Deployment from YAML string
+    pub async fn update_deployment_yaml(
+        &self,
+        namespace: &str,
+        name: &str,
+        yaml: &str,
+    ) -> AppResult<()> {
+        use kube::api::PostParams;
+
+        let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
+
+        // Parse YAML to Deployment
+        let deployment: Deployment = serde_yaml::from_str(yaml)
+            .map_err(|e| AppError::K8s(format!("Invalid YAML: {}", e)))?;
+
+        // Verify the name matches
+        let yaml_name = deployment.metadata.name.as_deref().unwrap_or("");
+        if yaml_name != name {
+            return Err(AppError::K8s(format!(
+                "Deployment name mismatch: expected '{}', got '{}'",
+                name, yaml_name
+            )));
+        }
+
+        // Replace the deployment
+        deployments
+            .replace(name, &PostParams::default(), &deployment)
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to update deployment: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Scale Deployment to specified replicas
+    pub async fn scale_deployment(
+        &self,
+        namespace: &str,
+        name: &str,
+        replicas: i32,
+    ) -> AppResult<()> {
+        use kube::api::Patch;
+
+        let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
+
+        let patch = serde_json::json!({
+            "spec": {
+                "replicas": replicas
+            }
+        });
+
+        deployments
+            .patch(name, &kube::api::PatchParams::default(), &Patch::Merge(&patch))
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to scale deployment: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Restart Deployment by triggering a rolling update
+    pub async fn restart_deployment(&self, namespace: &str, name: &str) -> AppResult<()> {
+        use kube::api::Patch;
+
+        let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
+
+        // Add/update annotation to trigger rolling restart
+        let now = chrono::Utc::now().to_rfc3339();
+        let patch = serde_json::json!({
+            "spec": {
+                "template": {
+                    "metadata": {
+                        "annotations": {
+                            "kubectl.kubernetes.io/restartedAt": now
+                        }
+                    }
+                }
+            }
+        });
+
+        deployments
+            .patch(name, &kube::api::PatchParams::default(), &Patch::Merge(&patch))
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to restart deployment: {}", e)))?;
+
+        Ok(())
+    }
 }

@@ -94,6 +94,10 @@ pub fn create_router(pool: SqlitePool, pf_service: PortForwardService) -> Router
         .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/statefulsets", get(k8s_list_statefulsets_http))
         .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/daemonsets", get(k8s_list_daemonsets_http))
         .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/replicasets", get(k8s_list_replicasets_http))
+        // Deployment operations
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/deployments/:name/yaml", get(k8s_get_deployment_yaml_http).put(k8s_update_deployment_yaml_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/deployments/:name/scale", post(k8s_scale_deployment_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/deployments/:name/restart", post(k8s_restart_deployment_http))
         // Port forward routes
         .route("/api/port-forward", get(list_port_forwards))
         .route("/api/port-forward/start", post(start_port_forward))
@@ -1751,4 +1755,54 @@ async fn k8s_list_replicasets_http(
     let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
     let replicasets = k8s.list_replicasets(&namespace).await?;
     Ok(Json(replicasets))
+}
+
+// ==================== Deployment Operations handlers ====================
+
+async fn k8s_get_deployment_yaml_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace, name)): Path<(i64, String, String)>,
+) -> Result<String, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let yaml = k8s.get_deployment_yaml(&namespace, &name).await?;
+    Ok(yaml)
+}
+
+#[derive(Deserialize)]
+struct UpdateDeploymentYamlRequest {
+    yaml: String,
+}
+
+async fn k8s_update_deployment_yaml_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace, name)): Path<(i64, String, String)>,
+    Json(req): Json<UpdateDeploymentYamlRequest>,
+) -> Result<StatusCode, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    k8s.update_deployment_yaml(&namespace, &name, &req.yaml).await?;
+    Ok(StatusCode::OK)
+}
+
+#[derive(Deserialize)]
+struct ScaleDeploymentRequest {
+    replicas: i32,
+}
+
+async fn k8s_scale_deployment_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace, name)): Path<(i64, String, String)>,
+    Json(req): Json<ScaleDeploymentRequest>,
+) -> Result<StatusCode, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    k8s.scale_deployment(&namespace, &name, req.replicas).await?;
+    Ok(StatusCode::OK)
+}
+
+async fn k8s_restart_deployment_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace, name)): Path<(i64, String, String)>,
+) -> Result<StatusCode, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    k8s.restart_deployment(&namespace, &name).await?;
+    Ok(StatusCode::OK)
 }

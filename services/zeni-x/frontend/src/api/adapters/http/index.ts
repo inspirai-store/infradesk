@@ -610,6 +610,34 @@ class HttpK8sApi implements IK8sApi {
     )
     return response.data
   }
+
+  // Deployment operations
+  async getDeploymentYaml(clusterId: number, namespace: string, name: string): Promise<string> {
+    const response = await api.get<string>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/deployments/${name}/yaml`
+    )
+    return response.data
+  }
+
+  async updateDeploymentYaml(clusterId: number, namespace: string, name: string, yaml: string): Promise<void> {
+    await api.put(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/deployments/${name}/yaml`,
+      { yaml }
+    )
+  }
+
+  async scaleDeployment(clusterId: number, namespace: string, name: string, replicas: number): Promise<void> {
+    await api.post(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/deployments/${name}/scale`,
+      { replicas }
+    )
+  }
+
+  async restartDeployment(clusterId: number, namespace: string, name: string): Promise<void> {
+    await api.post(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/deployments/${name}/restart`
+    )
+  }
 }
 
 // ==================== HTTP Port Forward API ====================

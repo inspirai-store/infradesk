@@ -544,6 +544,19 @@ export interface IK8sApi {
 
   /** List ReplicaSets in a namespace */
   listReplicaSets(clusterId: number, namespace: string): Promise<K8sReplicaSet[]>
+
+  // Deployment operations
+  /** Get Deployment as YAML */
+  getDeploymentYaml(clusterId: number, namespace: string, name: string): Promise<string>
+
+  /** Update Deployment from YAML */
+  updateDeploymentYaml(clusterId: number, namespace: string, name: string, yaml: string): Promise<void>
+
+  /** Scale Deployment */
+  scaleDeployment(clusterId: number, namespace: string, name: string, replicas: number): Promise<void>
+
+  /** Restart Deployment (trigger rolling update) */
+  restartDeployment(clusterId: number, namespace: string, name: string): Promise<void>
 }
 
 // ==================== Settings Types ====================

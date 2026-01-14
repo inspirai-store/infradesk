@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch, h } from 'vue'
+import { ref, watch, h, computed } from 'vue'
 import {
   NDataTable,
   NSpace,
@@ -11,12 +11,22 @@ import {
   NCollapse,
   NCollapseItem,
   NBadge,
-  useMessage
+  NModal,
+  NInputNumber,
+  NForm,
+  NFormItem,
+  NText,
+  useMessage,
+  useDialog
 } from 'naive-ui'
 import type { DataTableColumns } from 'naive-ui'
-import { RefreshOutline } from '@vicons/ionicons5'
+import { RefreshOutline, SwapVerticalOutline, ReloadOutline, CreateOutline } from '@vicons/ionicons5'
 import { api } from '@/api/adapter'
 import type { K8sDeployment, K8sStatefulSet, K8sDaemonSet, K8sJob, K8sCronJob, K8sReplicaSet } from '@/api/types'
+
+// Monaco Editor
+import * as monaco from 'monaco-editor'
+import { onBeforeUnmount } from 'vue'
 
 const props = defineProps<{
   clusterId: number
@@ -24,6 +34,7 @@ const props = defineProps<{
 }>()
 
 const message = useMessage()
+const dialog = useDialog()
 
 // State
 const deployments = ref<K8sDeployment[]>([])
@@ -43,13 +54,28 @@ const replicasetsLoading = ref(false)
 // Collapse expanded state
 const expandedNames = ref<string[]>(['deployments'])
 
-// Deployment columns
-const deploymentColumns: DataTableColumns<K8sDeployment> = [
-  { title: 'Name', key: 'name', width: 200, ellipsis: { tooltip: true } },
+// Dialog states
+const scaleDialogVisible = ref(false)
+const scaleDeploymentName = ref('')
+const scaleCurrentReplicas = ref(0)
+const scaleNewReplicas = ref(0)
+const scaleLoading = ref(false)
+
+const yamlEditorVisible = ref(false)
+const yamlDeploymentName = ref('')
+const yamlContent = ref('')
+const yamlLoading = ref(false)
+const yamlSaving = ref(false)
+const yamlEditorRef = ref<HTMLDivElement | null>(null)
+let monacoEditor: monaco.editor.IStandaloneCodeEditor | null = null
+
+// Deployment columns with actions
+const deploymentColumns = computed<DataTableColumns<K8sDeployment>>(() => [
+  { title: 'Name', key: 'name', width: 180, ellipsis: { tooltip: true } },
   {
     title: 'Replicas',
     key: 'replicas',
-    width: 120,
+    width: 100,
     render(row) {
       const ready = row.ready_replicas || 0
       const total = row.replicas || 0
@@ -60,7 +86,7 @@ const deploymentColumns: DataTableColumns<K8sDeployment> = [
   {
     title: 'Available',
     key: 'available_replicas',
-    width: 100,
+    width: 80,
     render(row) {
       return row.available_replicas || 0
     }
@@ -71,20 +97,69 @@ const deploymentColumns: DataTableColumns<K8sDeployment> = [
     ellipsis: { tooltip: true },
     render(row) {
       const labels = row.labels || {}
-      const entries = Object.entries(labels).slice(0, 3)
+      const entries = Object.entries(labels).slice(0, 2)
       return entries.map(([k, v]) => `${k}=${v}`).join(', ')
     }
   },
   {
     title: 'Created',
     key: 'created_at',
-    width: 160,
+    width: 140,
     render(row) {
       if (!row.created_at) return '-'
       return new Date(row.created_at).toLocaleString()
     }
+  },
+  {
+    title: 'Actions',
+    key: 'actions',
+    width: 160,
+    fixed: 'right',
+    render(row) {
+      return h(NSpace, { size: 4 }, () => [
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            quaternary: true,
+            type: 'info',
+            onClick: () => handleScale(row)
+          },
+          {
+            icon: () => h(NIcon, null, () => h(SwapVerticalOutline)),
+            default: () => 'Scale'
+          }
+        ),
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            quaternary: true,
+            type: 'warning',
+            onClick: () => handleRestart(row)
+          },
+          {
+            icon: () => h(NIcon, null, () => h(ReloadOutline)),
+            default: () => 'Restart'
+          }
+        ),
+        h(
+          NButton,
+          {
+            size: 'tiny',
+            quaternary: true,
+            type: 'default',
+            onClick: () => handleEdit(row)
+          },
+          {
+            icon: () => h(NIcon, null, () => h(CreateOutline)),
+            default: () => 'Edit'
+          }
+        )
+      ])
+    }
   }
-]
+])
 
 // StatefulSet columns
 const statefulsetColumns: DataTableColumns<K8sStatefulSet> = [
@@ -335,6 +410,134 @@ async function refreshAll() {
   ])
 }
 
+// Deployment action handlers
+function handleScale(deployment: K8sDeployment) {
+  scaleDeploymentName.value = deployment.name
+  scaleCurrentReplicas.value = deployment.replicas || 0
+  scaleNewReplicas.value = deployment.replicas || 0
+  scaleDialogVisible.value = true
+}
+
+async function confirmScale() {
+  scaleLoading.value = true
+  try {
+    await api.k8s.scaleDeployment(
+      props.clusterId,
+      props.namespace,
+      scaleDeploymentName.value,
+      scaleNewReplicas.value
+    )
+    message.success(`Scaled ${scaleDeploymentName.value} to ${scaleNewReplicas.value} replicas`)
+    scaleDialogVisible.value = false
+    await fetchDeployments()
+  } catch (error) {
+    message.error('Failed to scale deployment: ' + (error as Error).message)
+  } finally {
+    scaleLoading.value = false
+  }
+}
+
+function handleRestart(deployment: K8sDeployment) {
+  dialog.warning({
+    title: 'Confirm Restart',
+    content: `Are you sure you want to restart deployment "${deployment.name}"? This will trigger a rolling update.`,
+    positiveText: 'Restart',
+    negativeText: 'Cancel',
+    onPositiveClick: async () => {
+      try {
+        await api.k8s.restartDeployment(props.clusterId, props.namespace, deployment.name)
+        message.success(`Restarting deployment ${deployment.name}`)
+        await fetchDeployments()
+      } catch (error) {
+        message.error('Failed to restart deployment: ' + (error as Error).message)
+      }
+    }
+  })
+}
+
+async function handleEdit(deployment: K8sDeployment) {
+  yamlDeploymentName.value = deployment.name
+  yamlContent.value = ''
+  yamlLoading.value = true
+  yamlEditorVisible.value = true
+
+  try {
+    yamlContent.value = await api.k8s.getDeploymentYaml(
+      props.clusterId,
+      props.namespace,
+      deployment.name
+    )
+  } catch (error) {
+    message.error('Failed to load deployment YAML: ' + (error as Error).message)
+    yamlEditorVisible.value = false
+  } finally {
+    yamlLoading.value = false
+  }
+}
+
+async function saveYaml() {
+  if (!monacoEditor) return
+
+  yamlSaving.value = true
+  try {
+    const content = monacoEditor.getValue()
+    await api.k8s.updateDeploymentYaml(
+      props.clusterId,
+      props.namespace,
+      yamlDeploymentName.value,
+      content
+    )
+    message.success(`Updated deployment ${yamlDeploymentName.value}`)
+    yamlEditorVisible.value = false
+    await fetchDeployments()
+  } catch (error) {
+    message.error('Failed to update deployment: ' + (error as Error).message)
+  } finally {
+    yamlSaving.value = false
+  }
+}
+
+function closeYamlEditor() {
+  yamlEditorVisible.value = false
+  if (monacoEditor) {
+    monacoEditor.dispose()
+    monacoEditor = null
+  }
+}
+
+// Initialize Monaco Editor when YAML content is loaded
+watch(yamlContent, async (content) => {
+  if (!yamlEditorVisible.value || !content) return
+
+  // Wait for DOM to update
+  await new Promise(resolve => setTimeout(resolve, 100))
+
+  if (yamlEditorRef.value && !monacoEditor) {
+    monacoEditor = monaco.editor.create(yamlEditorRef.value, {
+      value: content,
+      language: 'yaml',
+      theme: 'vs-dark',
+      automaticLayout: true,
+      minimap: { enabled: false },
+      fontSize: 13,
+      lineNumbers: 'on',
+      scrollBeyondLastLine: false,
+      wordWrap: 'on',
+      tabSize: 2,
+      insertSpaces: true
+    })
+  } else if (monacoEditor) {
+    monacoEditor.setValue(content)
+  }
+})
+
+onBeforeUnmount(() => {
+  if (monacoEditor) {
+    monacoEditor.dispose()
+    monacoEditor = null
+  }
+})
+
 // Watch for prop changes
 watch(
   () => [props.clusterId, props.namespace],
@@ -373,6 +576,7 @@ watch(
             :bordered="false"
             size="small"
             max-height="300"
+            :scroll-x="800"
           />
           <NEmpty v-else description="No deployments found" size="small" />
         </NSpin>
@@ -483,5 +687,60 @@ watch(
         </NSpin>
       </NCollapseItem>
     </NCollapse>
+
+    <!-- Scale Dialog -->
+    <NModal v-model:show="scaleDialogVisible" preset="card" style="width: 400px" title="Scale Deployment">
+      <NForm>
+        <NFormItem label="Deployment">
+          <NText strong>{{ scaleDeploymentName }}</NText>
+        </NFormItem>
+        <NFormItem label="Current Replicas">
+          <NText>{{ scaleCurrentReplicas }}</NText>
+        </NFormItem>
+        <NFormItem label="New Replicas">
+          <NInputNumber
+            v-model:value="scaleNewReplicas"
+            :min="0"
+            :max="100"
+            style="width: 100%"
+          />
+        </NFormItem>
+      </NForm>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="scaleDialogVisible = false">Cancel</NButton>
+          <NButton
+            type="primary"
+            :loading="scaleLoading"
+            :disabled="scaleNewReplicas === scaleCurrentReplicas"
+            @click="confirmScale"
+          >
+            Scale
+          </NButton>
+        </NSpace>
+      </template>
+    </NModal>
+
+    <!-- YAML Editor Dialog -->
+    <NModal
+      v-model:show="yamlEditorVisible"
+      preset="card"
+      style="width: 900px; max-width: 95vw"
+      :title="`Edit Deployment: ${yamlDeploymentName}`"
+      :mask-closable="false"
+      @after-leave="closeYamlEditor"
+    >
+      <NSpin :show="yamlLoading">
+        <div ref="yamlEditorRef" style="height: 500px; border: 1px solid #444; border-radius: 4px" />
+      </NSpin>
+      <template #footer>
+        <NSpace justify="end">
+          <NButton @click="yamlEditorVisible = false">Cancel</NButton>
+          <NButton type="primary" :loading="yamlSaving" @click="saveYaml">
+            Save
+          </NButton>
+        </NSpace>
+      </template>
+    </NModal>
   </NSpace>
 </template>

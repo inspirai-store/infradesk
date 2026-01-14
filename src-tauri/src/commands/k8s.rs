@@ -472,3 +472,55 @@ pub async fn k8s_list_replicasets(
     let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
     k8s.list_replicasets(&namespace).await
 }
+
+// ==================== Deployment Operations ====================
+
+/// Get Deployment as YAML
+#[tauri::command]
+pub async fn k8s_get_deployment_yaml(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+    name: String,
+) -> Result<String, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.get_deployment_yaml(&namespace, &name).await
+}
+
+/// Update Deployment from YAML
+#[tauri::command]
+pub async fn k8s_update_deployment_yaml(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+    name: String,
+    yaml: String,
+) -> Result<(), AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.update_deployment_yaml(&namespace, &name, &yaml).await
+}
+
+/// Scale Deployment
+#[tauri::command]
+pub async fn k8s_scale_deployment(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+    name: String,
+    replicas: i32,
+) -> Result<(), AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.scale_deployment(&namespace, &name, replicas).await
+}
+
+/// Restart Deployment
+#[tauri::command]
+pub async fn k8s_restart_deployment(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+    name: String,
+) -> Result<(), AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.restart_deployment(&namespace, &name).await
+}

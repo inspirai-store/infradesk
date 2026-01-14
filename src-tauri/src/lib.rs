@@ -142,6 +142,11 @@ pub fn run() {
             commands::k8s_list_statefulsets,
             commands::k8s_list_daemonsets,
             commands::k8s_list_replicasets,
+            // Deployment operations
+            commands::k8s_get_deployment_yaml,
+            commands::k8s_update_deployment_yaml,
+            commands::k8s_scale_deployment,
+            commands::k8s_restart_deployment,
             // MySQL operations
             commands::mysql_get_info,
             commands::mysql_list_databases,

@@ -767,6 +767,39 @@ class IpcK8sApi implements IK8sApi {
       handleInvokeError(error)
     }
   }
+
+  // Deployment operations
+  async getDeploymentYaml(clusterId: number, namespace: string, name: string): Promise<string> {
+    try {
+      return await invoke<string>('k8s_get_deployment_yaml', { clusterId, namespace, name })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async updateDeploymentYaml(clusterId: number, namespace: string, name: string, yaml: string): Promise<void> {
+    try {
+      await invoke('k8s_update_deployment_yaml', { clusterId, namespace, name, yaml })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async scaleDeployment(clusterId: number, namespace: string, name: string, replicas: number): Promise<void> {
+    try {
+      await invoke('k8s_scale_deployment', { clusterId, namespace, name, replicas })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async restartDeployment(clusterId: number, namespace: string, name: string): Promise<void> {
+    try {
+      await invoke('k8s_restart_deployment', { clusterId, namespace, name })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
 }
 
 // Rust PortForward struct mapping
