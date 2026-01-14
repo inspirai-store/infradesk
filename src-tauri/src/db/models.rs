@@ -1051,6 +1051,25 @@ pub struct K8sServiceInfo {
     pub external_ip: Option<String>,
     pub ports: Vec<String>,
     pub created_at: Option<String>,
+    /// ExternalName service target (only for ExternalName type)
+    pub external_name: Option<String>,
+}
+
+/// Proxy Pod info for ExternalName service connection
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyPodInfo {
+    pub name: String,
+    pub namespace: String,
+    /// Target type: mysql, redis, etc.
+    pub target_type: Option<String>,
+    /// Target host being proxied
+    pub target_host: Option<String>,
+    /// Target port being proxied
+    pub target_port: Option<i32>,
+    /// Pod status: Running, Pending, etc.
+    pub status: String,
+    /// Associated Service name
+    pub service_name: Option<String>,
 }
 
 /// K8s Ingress info

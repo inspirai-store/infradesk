@@ -104,6 +104,10 @@ pub fn create_router(pool: SqlitePool, pf_service: PortForwardService) -> Router
         .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/deployments/:name/yaml", get(k8s_get_deployment_yaml_http).put(k8s_update_deployment_yaml_http))
         .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/deployments/:name/scale", post(k8s_scale_deployment_http))
         .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/deployments/:name/restart", post(k8s_restart_deployment_http))
+        // Proxy operations
+        .route("/api/k8s/clusters/:cluster_id/proxies", get(k8s_list_all_proxies_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/proxies", get(k8s_list_proxies_http).post(k8s_create_proxy_http))
+        .route("/api/k8s/clusters/:cluster_id/namespaces/:namespace/proxies/:name", delete(k8s_delete_proxy_http))
         // Port forward routes
         .route("/api/port-forward", get(list_port_forwards))
         .route("/api/port-forward/start", post(start_port_forward))
@@ -2487,5 +2491,62 @@ async fn k8s_restart_deployment_http(
 ) -> Result<StatusCode, AppError> {
     let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
     k8s.restart_deployment(&namespace, &name).await?;
+    Ok(StatusCode::OK)
+}
+
+// ==================== Proxy Pod Operations ====================
+
+async fn k8s_list_proxies_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+) -> Result<Json<Vec<crate::db::models::ProxyPodInfo>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let proxies = k8s.list_proxy_pods(&namespace).await?;
+    Ok(Json(proxies))
+}
+
+async fn k8s_list_all_proxies_http(
+    State(state): State<Arc<AppState>>,
+    Path(cluster_id): Path<i64>,
+) -> Result<Json<Vec<crate::db::models::ProxyPodInfo>>, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    let proxies = k8s.list_all_proxy_pods().await?;
+    Ok(Json(proxies))
+}
+
+#[derive(Debug, Deserialize)]
+struct CreateProxyRequest {
+    proxy_name: String,
+    target_host: String,
+    target_port: u16,
+    target_type: String,
+    /// Optional custom image for the proxy container (defaults to "alpine/socat")
+    image: Option<String>,
+}
+
+async fn k8s_create_proxy_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace)): Path<(i64, String)>,
+    Json(req): Json<CreateProxyRequest>,
+) -> Result<StatusCode, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    k8s.create_tcp_proxy(
+        &namespace,
+        &req.proxy_name,
+        &req.target_host,
+        req.target_port,
+        &req.target_type,
+        req.image.as_deref(),
+    )
+    .await?;
+    Ok(StatusCode::CREATED)
+}
+
+async fn k8s_delete_proxy_http(
+    State(state): State<Arc<AppState>>,
+    Path((cluster_id, namespace, name)): Path<(i64, String, String)>,
+) -> Result<StatusCode, AppError> {
+    let k8s = get_k8s_service_from_cluster(&state.pool, cluster_id).await?;
+    k8s.delete_tcp_proxy(&namespace, &name).await?;
     Ok(StatusCode::OK)
 }

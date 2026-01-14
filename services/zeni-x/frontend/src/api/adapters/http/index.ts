@@ -30,6 +30,8 @@ import type {
   K8sStatefulSet,
   K8sDaemonSet,
   K8sReplicaSet,
+  ProxyPodInfo,
+  CreateProxyRequest,
   UserSetting,
   BatchSettingsResponse,
   LLMConfigResponse,
@@ -817,6 +819,32 @@ class HttpK8sApi implements IK8sApi {
     await api.post(
       `/k8s/clusters/${clusterId}/namespaces/${namespace}/deployments/${name}/restart`
     )
+  }
+
+  // ==================== Proxy Operations ====================
+
+  async listProxies(clusterId: number, namespace: string): Promise<ProxyPodInfo[]> {
+    const response = await api.get<ProxyPodInfo[]>(
+      `/k8s/clusters/${clusterId}/namespaces/${namespace}/proxies`
+    )
+    return response.data
+  }
+
+  async listAllProxies(clusterId: number): Promise<ProxyPodInfo[]> {
+    const response = await api.get<ProxyPodInfo[]>(`/k8s/clusters/${clusterId}/proxies`)
+    return response.data
+  }
+
+  async createProxy(
+    clusterId: number,
+    namespace: string,
+    request: CreateProxyRequest
+  ): Promise<void> {
+    await api.post(`/k8s/clusters/${clusterId}/namespaces/${namespace}/proxies`, request)
+  }
+
+  async deleteProxy(clusterId: number, namespace: string, proxyName: string): Promise<void> {
+    await api.delete(`/k8s/clusters/${clusterId}/namespaces/${namespace}/proxies/${proxyName}`)
   }
 }
 

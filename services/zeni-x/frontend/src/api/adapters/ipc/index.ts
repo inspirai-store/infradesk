@@ -30,6 +30,8 @@ import type {
   K8sStatefulSet,
   K8sDaemonSet,
   K8sReplicaSet,
+  ProxyPodInfo,
+  CreateProxyRequest,
   UserSetting,
   BatchSettingsResponse,
   LLMConfigResponse,
@@ -1142,6 +1144,51 @@ class IpcK8sApi implements IK8sApi {
   async restartDeployment(clusterId: number, namespace: string, name: string): Promise<void> {
     try {
       await invoke('k8s_restart_deployment', { clusterId, namespace, name })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  // ==================== Proxy Operations ====================
+
+  async listProxies(clusterId: number, namespace: string): Promise<ProxyPodInfo[]> {
+    try {
+      return await invoke<ProxyPodInfo[]>('k8s_list_proxies', { clusterId, namespace })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async listAllProxies(clusterId: number): Promise<ProxyPodInfo[]> {
+    try {
+      return await invoke<ProxyPodInfo[]>('k8s_list_all_proxies', { clusterId })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async createProxy(
+    clusterId: number,
+    namespace: string,
+    request: CreateProxyRequest
+  ): Promise<void> {
+    try {
+      await invoke('k8s_create_proxy', {
+        clusterId,
+        namespace,
+        proxyName: request.proxy_name,
+        targetHost: request.target_host,
+        targetPort: request.target_port,
+        targetType: request.target_type,
+      })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async deleteProxy(clusterId: number, namespace: string, proxyName: string): Promise<void> {
+    try {
+      await invoke('k8s_delete_proxy', { clusterId, namespace, proxyName })
     } catch (error) {
       handleInvokeError(error)
     }

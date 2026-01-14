@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use crate::db::models::{
     Cluster, Connection, DiscoveredService, ImportConnectionsRequest, ImportConnectionsResponse,
     ImportConnectionResult, K8sConfigMapInfo, K8sDeployment, K8sIngressInfo, K8sPod,
-    K8sSecretInfo, K8sServiceInfo, ListClustersResponse,
+    K8sSecretInfo, K8sServiceInfo, ListClustersResponse, ProxyPodInfo,
 };
 use crate::db::SqlitePool;
 use crate::error::AppError;
@@ -523,4 +523,63 @@ pub async fn k8s_restart_deployment(
 ) -> Result<(), AppError> {
     let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
     k8s.restart_deployment(&namespace, &name).await
+}
+
+// ==================== Proxy Pod Operations ====================
+
+/// List proxy pods with zeni-x=proxy label in a namespace
+#[tauri::command]
+pub async fn k8s_list_proxies(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+) -> Result<Vec<ProxyPodInfo>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_proxy_pods(&namespace).await
+}
+
+/// List all proxy pods across all namespaces
+#[tauri::command]
+pub async fn k8s_list_all_proxies(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+) -> Result<Vec<ProxyPodInfo>, AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.list_all_proxy_pods().await
+}
+
+/// Create a TCP proxy for ExternalName service
+#[tauri::command]
+pub async fn k8s_create_proxy(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+    proxy_name: String,
+    target_host: String,
+    target_port: u16,
+    target_type: String,
+    image: Option<String>,
+) -> Result<(), AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.create_tcp_proxy(
+        &namespace,
+        &proxy_name,
+        &target_host,
+        target_port,
+        &target_type,
+        image.as_deref(),
+    )
+    .await
+}
+
+/// Delete a TCP proxy
+#[tauri::command]
+pub async fn k8s_delete_proxy(
+    pool: State<'_, SqlitePool>,
+    cluster_id: i64,
+    namespace: String,
+    proxy_name: String,
+) -> Result<(), AppError> {
+    let k8s = get_k8s_service(pool.inner(), cluster_id).await?;
+    k8s.delete_tcp_proxy(&namespace, &proxy_name).await
 }

@@ -426,6 +426,38 @@ export interface K8sServiceInfo {
   external_ip?: string
   ports: string[]
   created_at?: string
+  /** ExternalName service target (only for ExternalName type) */
+  external_name?: string
+}
+
+/**
+ * Proxy Pod info for ExternalName service connection
+ */
+export interface ProxyPodInfo {
+  name: string
+  namespace: string
+  /** Target type: mysql, redis, etc. */
+  target_type?: string
+  /** Target host being proxied */
+  target_host?: string
+  /** Target port being proxied */
+  target_port?: number
+  /** Pod status: Running, Pending, etc. */
+  status: string
+  /** Associated Service name */
+  service_name?: string
+}
+
+/**
+ * Request to create a TCP proxy
+ */
+export interface CreateProxyRequest {
+  proxy_name: string
+  target_host: string
+  target_port: number
+  target_type: string
+  /** Optional custom image for the proxy container (defaults to "alpine/socat") */
+  image?: string
 }
 
 /**
@@ -672,6 +704,19 @@ export interface IK8sApi {
 
   /** Restart Deployment (trigger rolling update) */
   restartDeployment(clusterId: number, namespace: string, name: string): Promise<void>
+
+  // Proxy operations
+  /** List proxy pods with zeni-x=proxy label in a namespace */
+  listProxies(clusterId: number, namespace: string): Promise<ProxyPodInfo[]>
+
+  /** List all proxy pods across all namespaces */
+  listAllProxies(clusterId: number): Promise<ProxyPodInfo[]>
+
+  /** Create a TCP proxy for ExternalName service */
+  createProxy(clusterId: number, namespace: string, request: CreateProxyRequest): Promise<void>
+
+  /** Delete a TCP proxy */
+  deleteProxy(clusterId: number, namespace: string, proxyName: string): Promise<void>
 }
 
 // ==================== Settings Types ====================

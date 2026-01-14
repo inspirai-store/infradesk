@@ -147,6 +147,11 @@ pub fn run() {
             commands::k8s_update_deployment_yaml,
             commands::k8s_scale_deployment,
             commands::k8s_restart_deployment,
+            // Proxy operations
+            commands::k8s_list_proxies,
+            commands::k8s_list_all_proxies,
+            commands::k8s_create_proxy,
+            commands::k8s_delete_proxy,
             // MySQL operations
             commands::mysql_get_info,
             commands::mysql_list_databases,

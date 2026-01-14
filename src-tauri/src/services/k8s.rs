@@ -16,7 +16,7 @@ use std::collections::HashMap;
 use crate::db::models::{
     DiscoveredService, K8sConfigMapInfo, K8sCronJob, K8sDaemonSet, K8sDeployment, K8sIngressInfo,
     K8sJob, K8sPod, K8sPodDetail, K8sReplicaSet, K8sSecretInfo, K8sServiceInfo, K8sStatefulSet,
-    ListClustersResponse,
+    ListClustersResponse, ProxyPodInfo,
 };
 use crate::error::{AppError, AppResult};
 
@@ -489,16 +489,26 @@ impl K8sService {
                     .and_then(|ingress| ingress.first())
                     .and_then(|ing| ing.ip.clone().or_else(|| ing.hostname.clone()));
 
+                let service_type = spec
+                    .and_then(|s| s.type_.clone())
+                    .unwrap_or_else(|| "ClusterIP".to_string());
+
+                // Get external_name for ExternalName type services
+                let external_name = if service_type == "ExternalName" {
+                    spec.and_then(|s| s.external_name.clone())
+                } else {
+                    None
+                };
+
                 K8sServiceInfo {
                     name: svc.metadata.name.unwrap_or_default(),
                     namespace: svc.metadata.namespace.unwrap_or_else(|| namespace.to_string()),
-                    service_type: spec
-                        .and_then(|s| s.type_.clone())
-                        .unwrap_or_else(|| "ClusterIP".to_string()),
+                    service_type,
                     cluster_ip: spec.and_then(|s| s.cluster_ip.clone()),
                     external_ip,
                     ports,
                     created_at: svc.metadata.creation_timestamp.map(|t| t.0.to_rfc3339()),
+                    external_name,
                 }
             })
             .collect())
@@ -1097,6 +1107,234 @@ impl K8sService {
             .patch(name, &kube::api::PatchParams::default(), &Patch::Merge(&patch))
             .await
             .map_err(|e| AppError::K8s(format!("Failed to restart deployment: {}", e)))?;
+
+        Ok(())
+    }
+
+    // ==================== Proxy Pod Operations ====================
+
+    /// List proxy pods with zeni-x=proxy label in a namespace
+    pub async fn list_proxy_pods(&self, namespace: &str) -> AppResult<Vec<ProxyPodInfo>> {
+        let pods: Api<Pod> = Api::namespaced(self.client.clone(), namespace);
+
+        // Filter pods with zeni-x=proxy label
+        let list_params = ListParams::default().labels("zeni-x=proxy");
+        let pod_list = pods
+            .list(&list_params)
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list proxy pods: {}", e)))?;
+
+        // Also get services to find associated service names
+        let services: Api<Service> = Api::namespaced(self.client.clone(), namespace);
+        let service_list_params = ListParams::default().labels("zeni-x=proxy");
+        let svc_list = services.list(&service_list_params).await.ok();
+
+        let proxy_pods: Vec<ProxyPodInfo> = pod_list
+            .items
+            .into_iter()
+            .filter_map(|pod| {
+                let metadata = pod.metadata;
+                let labels = metadata.labels.as_ref()?;
+                let status = pod.status.as_ref()?.phase.clone()?;
+                let pod_name = metadata.name.clone()?;
+
+                // Find associated service by matching labels
+                let service_name = svc_list.as_ref().and_then(|list| {
+                    list.items.iter().find_map(|svc| {
+                        let svc_selector = svc.spec.as_ref()?.selector.as_ref()?;
+                        let pod_labels = labels;
+                        // Check if service selector matches pod labels
+                        if svc_selector.iter().all(|(k, v)| pod_labels.get(k) == Some(v)) {
+                            svc.metadata.name.clone()
+                        } else {
+                            None
+                        }
+                    })
+                });
+
+                Some(ProxyPodInfo {
+                    name: pod_name,
+                    namespace: metadata.namespace.unwrap_or_else(|| namespace.to_string()),
+                    target_type: labels.get("zeni-x/target").cloned(),
+                    target_host: labels.get("zeni-x/target-host").cloned(),
+                    target_port: labels.get("zeni-x/target-port").and_then(|p| p.parse().ok()),
+                    status,
+                    service_name,
+                })
+            })
+            .collect();
+
+        Ok(proxy_pods)
+    }
+
+    /// List all proxy pods across all namespaces
+    pub async fn list_all_proxy_pods(&self) -> AppResult<Vec<ProxyPodInfo>> {
+        let pods: Api<Pod> = Api::all(self.client.clone());
+
+        let list_params = ListParams::default().labels("zeni-x=proxy");
+        let pod_list = pods
+            .list(&list_params)
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to list all proxy pods: {}", e)))?;
+
+        let proxy_pods: Vec<ProxyPodInfo> = pod_list
+            .items
+            .into_iter()
+            .filter_map(|pod| {
+                let metadata = pod.metadata;
+                let labels = metadata.labels.as_ref()?;
+                let status = pod.status.as_ref()?.phase.clone()?;
+
+                Some(ProxyPodInfo {
+                    name: metadata.name?,
+                    namespace: metadata.namespace.unwrap_or_default(),
+                    target_type: labels.get("zeni-x/target").cloned(),
+                    target_host: labels.get("zeni-x/target-host").cloned(),
+                    target_port: labels.get("zeni-x/target-port").and_then(|p| p.parse().ok()),
+                    status,
+                    service_name: None,
+                })
+            })
+            .collect();
+
+        Ok(proxy_pods)
+    }
+
+    /// Create a TCP proxy deployment and service for ExternalName service
+    ///
+    /// # Arguments
+    /// * `namespace` - The namespace to create the proxy in
+    /// * `proxy_name` - Name for the proxy deployment and service
+    /// * `target_host` - Target host to proxy to (e.g., RDS endpoint)
+    /// * `target_port` - Target port to proxy to
+    /// * `target_type` - Type of target (e.g., "mysql", "redis")
+    /// * `image` - Optional custom image (defaults to "alpine/socat")
+    pub async fn create_tcp_proxy(
+        &self,
+        namespace: &str,
+        proxy_name: &str,
+        target_host: &str,
+        target_port: u16,
+        target_type: &str,
+        image: Option<&str>,
+    ) -> AppResult<()> {
+        use k8s_openapi::api::apps::v1::DeploymentSpec;
+        use k8s_openapi::api::core::v1::{
+            Container, ContainerPort, PodSpec, PodTemplateSpec, ServicePort, ServiceSpec,
+        };
+        use k8s_openapi::apimachinery::pkg::apis::meta::v1::LabelSelector;
+        use kube::api::PostParams;
+        use std::collections::BTreeMap;
+
+        // Build labels
+        let mut labels: BTreeMap<String, String> = BTreeMap::new();
+        labels.insert("app".to_string(), proxy_name.to_string());
+        labels.insert("zeni-x".to_string(), "proxy".to_string());
+        labels.insert("zeni-x/target".to_string(), target_type.to_string());
+        labels.insert("zeni-x/target-host".to_string(), target_host.to_string());
+        labels.insert("zeni-x/target-port".to_string(), target_port.to_string());
+
+        // Build deployment
+        let deployment = Deployment {
+            metadata: kube::api::ObjectMeta {
+                name: Some(proxy_name.to_string()),
+                namespace: Some(namespace.to_string()),
+                labels: Some(labels.clone()),
+                ..Default::default()
+            },
+            spec: Some(DeploymentSpec {
+                replicas: Some(1),
+                selector: LabelSelector {
+                    match_labels: Some(labels.clone()),
+                    ..Default::default()
+                },
+                template: PodTemplateSpec {
+                    metadata: Some(kube::api::ObjectMeta {
+                        labels: Some(labels.clone()),
+                        ..Default::default()
+                    }),
+                    spec: Some(PodSpec {
+                        containers: vec![Container {
+                            name: "socat".to_string(),
+                            image: Some(image.unwrap_or("alpine/socat").to_string()),
+                            args: Some(vec![
+                                format!("TCP-LISTEN:{},fork,reuseaddr", target_port),
+                                format!("TCP:{}:{}", target_host, target_port),
+                            ]),
+                            ports: Some(vec![ContainerPort {
+                                container_port: target_port as i32,
+                                protocol: Some("TCP".to_string()),
+                                ..Default::default()
+                            }]),
+                            ..Default::default()
+                        }],
+                        ..Default::default()
+                    }),
+                },
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // Build service
+        let service = Service {
+            metadata: kube::api::ObjectMeta {
+                name: Some(proxy_name.to_string()),
+                namespace: Some(namespace.to_string()),
+                labels: Some(labels.clone()),
+                ..Default::default()
+            },
+            spec: Some(ServiceSpec {
+                selector: Some(labels.clone()),
+                ports: Some(vec![ServicePort {
+                    port: target_port as i32,
+                    target_port: Some(
+                        k8s_openapi::apimachinery::pkg::util::intstr::IntOrString::Int(
+                            target_port as i32,
+                        ),
+                    ),
+                    protocol: Some("TCP".to_string()),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        // Create deployment
+        let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
+        deployments
+            .create(&PostParams::default(), &deployment)
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to create proxy deployment: {}", e)))?;
+
+        // Create service
+        let services: Api<Service> = Api::namespaced(self.client.clone(), namespace);
+        services
+            .create(&PostParams::default(), &service)
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to create proxy service: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Delete a TCP proxy deployment and service
+    pub async fn delete_tcp_proxy(&self, namespace: &str, proxy_name: &str) -> AppResult<()> {
+        use kube::api::DeleteParams;
+
+        // Delete deployment
+        let deployments: Api<Deployment> = Api::namespaced(self.client.clone(), namespace);
+        deployments
+            .delete(proxy_name, &DeleteParams::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to delete proxy deployment: {}", e)))?;
+
+        // Delete service
+        let services: Api<Service> = Api::namespaced(self.client.clone(), namespace);
+        services
+            .delete(proxy_name, &DeleteParams::default())
+            .await
+            .map_err(|e| AppError::K8s(format!("Failed to delete proxy service: {}", e)))?;
 
         Ok(())
     }
