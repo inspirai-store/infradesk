@@ -18,6 +18,7 @@ import type {
   IPortForwardApi,
   ISettingsApi,
   ILLMConfigApi,
+  IK8sFavoriteApi,
   ApiError,
   K8sDeployment,
   K8sPod,
@@ -37,6 +38,10 @@ import type {
   LLMConfigResponse,
   CreateLLMConfigRequest,
   UpdateLLMConfigRequest,
+  K8sFavorite,
+  K8sFavoriteWithCluster,
+  CreateK8sFavoriteRequest,
+  UpdateK8sFavoriteRequest,
 } from '../../types'
 import type {
   Connection,
@@ -1419,6 +1424,58 @@ class IpcLLMConfigApi implements ILLMConfigApi {
   }
 }
 
+// ==================== IPC K8s Favorites API ====================
+
+class IpcK8sFavoriteApi implements IK8sFavoriteApi {
+  async getAll(category?: string): Promise<K8sFavoriteWithCluster[]> {
+    try {
+      return await invoke<K8sFavoriteWithCluster[]>('get_k8s_favorites', { category })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async get(id: number): Promise<K8sFavorite> {
+    try {
+      return await invoke<K8sFavorite>('get_k8s_favorite', { id })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async exists(clusterId: number, namespace: string): Promise<K8sFavorite | null> {
+    try {
+      return await invoke<K8sFavorite | null>('k8s_favorite_exists', { clusterId, namespace })
+    } catch {
+      return null
+    }
+  }
+
+  async create(request: CreateK8sFavoriteRequest): Promise<K8sFavorite> {
+    try {
+      return await invoke<K8sFavorite>('create_k8s_favorite', { request })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async update(id: number, request: UpdateK8sFavoriteRequest): Promise<K8sFavorite> {
+    try {
+      return await invoke<K8sFavorite>('update_k8s_favorite', { id, request })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+
+  async delete(id: number): Promise<void> {
+    try {
+      await invoke('delete_k8s_favorite', { id })
+    } catch (error) {
+      handleInvokeError(error)
+    }
+  }
+}
+
 // ==================== IPC Adapter Factory ====================
 
 /**
@@ -1436,5 +1493,6 @@ export function createIpcAdapter(): IApiAdapter {
     portForward: new IpcPortForwardApi(),
     settings: new IpcSettingsApi(),
     llmConfig: new IpcLLMConfigApi(),
+    k8sFavorite: new IpcK8sFavoriteApi(),
   }
 }

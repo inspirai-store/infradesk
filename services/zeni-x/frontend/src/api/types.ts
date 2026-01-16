@@ -883,6 +883,113 @@ export interface IPortForwardApi {
   touch(id: string): Promise<void>
 }
 
+// ==================== K8s Favorites Types ====================
+
+/**
+ * K8s favorite entry - saved cluster + namespace combination with alias
+ */
+export interface K8sFavorite {
+  id?: number
+  /** Display name / alias (e.g., "游戏UAT") */
+  name: string
+  /** Associated cluster ID */
+  cluster_id: number
+  /** Kubernetes namespace */
+  namespace: string
+  /** Optional description */
+  description?: string
+  /** Category for grouping */
+  category?: string
+  /** Sort order for display */
+  sort_order: number
+  /** Creation timestamp */
+  created_at?: string
+  /** Last update timestamp */
+  updated_at?: string
+}
+
+/**
+ * K8s favorite with cluster info for display
+ */
+export interface K8sFavoriteWithCluster {
+  id: number
+  /** Display name / alias */
+  name: string
+  /** Associated cluster ID */
+  cluster_id: number
+  /** Cluster name */
+  cluster_name: string
+  /** Kubernetes namespace */
+  namespace: string
+  /** Optional description */
+  description?: string
+  /** Category for grouping */
+  category?: string
+  /** Sort order */
+  sort_order: number
+  /** Creation timestamp */
+  created_at?: string
+  /** Last update timestamp */
+  updated_at?: string
+}
+
+/**
+ * Request to create a K8s favorite
+ */
+export interface CreateK8sFavoriteRequest {
+  /** Display name / alias */
+  name: string
+  /** Associated cluster ID */
+  cluster_id: number
+  /** Kubernetes namespace */
+  namespace: string
+  /** Optional description */
+  description?: string
+  /** Category for grouping */
+  category?: string
+  /** Sort order (optional, defaults to 0) */
+  sort_order?: number
+}
+
+/**
+ * Request to update a K8s favorite
+ */
+export interface UpdateK8sFavoriteRequest {
+  /** Display name / alias */
+  name?: string
+  /** Optional description */
+  description?: string
+  /** Category for grouping */
+  category?: string
+  /** Sort order */
+  sort_order?: number
+}
+
+// ==================== K8s Favorites API Interface ====================
+
+/**
+ * K8s favorites API interface
+ */
+export interface IK8sFavoriteApi {
+  /** Get all favorites with optional category filter */
+  getAll(category?: string): Promise<K8sFavoriteWithCluster[]>
+
+  /** Get a single favorite by ID */
+  get(id: number): Promise<K8sFavorite>
+
+  /** Check if a favorite exists for the given cluster and namespace */
+  exists(clusterId: number, namespace: string): Promise<K8sFavorite | null>
+
+  /** Create a new favorite */
+  create(request: CreateK8sFavoriteRequest): Promise<K8sFavorite>
+
+  /** Update an existing favorite */
+  update(id: number, request: UpdateK8sFavoriteRequest): Promise<K8sFavorite>
+
+  /** Delete a favorite */
+  delete(id: number): Promise<void>
+}
+
 // ==================== Unified API Adapter Interface ====================
 
 /**
@@ -921,6 +1028,9 @@ export interface IApiAdapter {
 
   /** LLM configuration API */
   llmConfig: ILLMConfigApi
+
+  /** K8s favorites API */
+  k8sFavorite: IK8sFavoriteApi
 }
 
 // ==================== API Error ====================

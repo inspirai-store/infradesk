@@ -222,6 +222,10 @@ pub fn create_router(pool: SqlitePool, pf_service: PortForwardService) -> Router
         .route("/api/llm-configs/:id", delete(delete_llm_config_http))
         .route("/api/llm-configs/:id/default", put(set_default_llm_config_http))
         .route("/api/llm-configs/:id/api-key", get(get_llm_api_key_http))
+        // K8s favorites routes
+        .route("/api/k8s/favorites", get(get_k8s_favorites_http).post(create_k8s_favorite_http))
+        .route("/api/k8s/favorites/:id", get(get_k8s_favorite_http).put(update_k8s_favorite_http).delete(delete_k8s_favorite_http))
+        .route("/api/k8s/favorites/check", post(k8s_favorite_exists_http))
         // Health check route
         .route("/api/health", get(health_check))
         // Log streaming routes
@@ -2465,6 +2469,70 @@ async fn get_llm_api_key_http(
     let service = LLMConfigService::new(state.pool.clone());
     let api_key = service.get_api_key(id).await?;
     Ok(Json(api_key))
+}
+
+// ==================== K8s Favorites handlers ====================
+
+use crate::db::models::{K8sFavorite, K8sFavoriteWithCluster, CreateK8sFavoriteRequest, UpdateK8sFavoriteRequest};
+
+#[derive(Deserialize)]
+struct K8sFavoriteQuery {
+    category: Option<String>,
+}
+
+async fn get_k8s_favorites_http(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<K8sFavoriteQuery>,
+) -> Result<Json<Vec<K8sFavoriteWithCluster>>, AppError> {
+    let favorites = state.pool.get_k8s_favorites(query.category.as_deref()).await?;
+    Ok(Json(favorites))
+}
+
+async fn get_k8s_favorite_http(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<Json<K8sFavorite>, AppError> {
+    let favorite = state.pool.get_k8s_favorite(id).await?;
+    Ok(Json(favorite))
+}
+
+#[derive(Deserialize)]
+struct K8sFavoriteExistsRequest {
+    cluster_id: i64,
+    namespace: String,
+}
+
+async fn k8s_favorite_exists_http(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<K8sFavoriteExistsRequest>,
+) -> Result<Json<Option<K8sFavorite>>, AppError> {
+    let favorite = state.pool.k8s_favorite_exists(req.cluster_id, &req.namespace).await?;
+    Ok(Json(favorite))
+}
+
+async fn create_k8s_favorite_http(
+    State(state): State<Arc<AppState>>,
+    Json(request): Json<CreateK8sFavoriteRequest>,
+) -> Result<Json<K8sFavorite>, AppError> {
+    let favorite = state.pool.create_k8s_favorite(&request).await?;
+    Ok(Json(favorite))
+}
+
+async fn update_k8s_favorite_http(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+    Json(request): Json<UpdateK8sFavoriteRequest>,
+) -> Result<Json<K8sFavorite>, AppError> {
+    let favorite = state.pool.update_k8s_favorite(id, &request).await?;
+    Ok(Json(favorite))
+}
+
+async fn delete_k8s_favorite_http(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<i64>,
+) -> Result<StatusCode, AppError> {
+    state.pool.delete_k8s_favorite(id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ==================== Extended K8s Workload handlers ====================

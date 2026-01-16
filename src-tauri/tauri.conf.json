@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@tauri-apps/cli/config.schema.json",
   "productName": "Zeni-X",
-  "version": "1.0.0",
+  "version": "1.0.4",
   "identifier": "com.zenix.database",
   "build": {
     "frontendDist": "../services/zeni-x/frontend/dist",

@@ -1436,6 +1436,112 @@ impl From<LLMConfig> for LLMConfigResponse {
     }
 }
 
+// ==================== K8s Favorites Models ====================
+
+/// K8s favorite entry - saved cluster + namespace combination with alias
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow, Default)]
+pub struct K8sFavorite {
+    /// Unique identifier
+    pub id: Option<i64>,
+
+    /// Display name / alias (e.g., "游戏UAT")
+    pub name: String,
+
+    /// Associated cluster ID
+    pub cluster_id: i64,
+
+    /// Kubernetes namespace
+    pub namespace: String,
+
+    /// Optional description
+    pub description: Option<String>,
+
+    /// Category for grouping
+    pub category: Option<String>,
+
+    /// Sort order for display
+    #[serde(default)]
+    pub sort_order: i32,
+
+    /// Creation timestamp
+    pub created_at: Option<String>,
+
+    /// Last update timestamp
+    pub updated_at: Option<String>,
+}
+
+/// K8s favorite with cluster info for display
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct K8sFavoriteWithCluster {
+    /// Favorite ID
+    pub id: i64,
+
+    /// Display name / alias
+    pub name: String,
+
+    /// Associated cluster ID
+    pub cluster_id: i64,
+
+    /// Cluster name
+    pub cluster_name: String,
+
+    /// Kubernetes namespace
+    pub namespace: String,
+
+    /// Optional description
+    pub description: Option<String>,
+
+    /// Category for grouping
+    pub category: Option<String>,
+
+    /// Sort order
+    pub sort_order: i32,
+
+    /// Creation timestamp
+    pub created_at: Option<String>,
+
+    /// Last update timestamp
+    pub updated_at: Option<String>,
+}
+
+/// Request to create a K8s favorite
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateK8sFavoriteRequest {
+    /// Display name / alias
+    pub name: String,
+
+    /// Associated cluster ID
+    pub cluster_id: i64,
+
+    /// Kubernetes namespace
+    pub namespace: String,
+
+    /// Optional description
+    pub description: Option<String>,
+
+    /// Category for grouping
+    pub category: Option<String>,
+
+    /// Sort order (optional, defaults to 0)
+    pub sort_order: Option<i32>,
+}
+
+/// Request to update a K8s favorite
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateK8sFavoriteRequest {
+    /// Display name / alias
+    pub name: Option<String>,
+
+    /// Optional description
+    pub description: Option<String>,
+
+    /// Category for grouping
+    pub category: Option<String>,
+
+    /// Sort order
+    pub sort_order: Option<i32>,
+}
+
 // ==================== Database Object Management Types ====================
 
 /// View information

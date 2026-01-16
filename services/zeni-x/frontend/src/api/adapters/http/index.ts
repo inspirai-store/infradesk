@@ -19,6 +19,7 @@ import type {
   IPortForwardApi,
   ISettingsApi,
   ILLMConfigApi,
+  IK8sFavoriteApi,
   K8sDeployment,
   K8sPod,
   K8sConfigMapInfo,
@@ -37,6 +38,10 @@ import type {
   LLMConfigResponse,
   CreateLLMConfigRequest,
   UpdateLLMConfigRequest,
+  K8sFavorite,
+  K8sFavoriteWithCluster,
+  CreateK8sFavoriteRequest,
+  UpdateK8sFavoriteRequest,
 } from '../../types'
 import type {
   Connection,
@@ -1017,6 +1022,48 @@ class HttpLLMConfigApi implements ILLMConfigApi {
   }
 }
 
+// ==================== HTTP K8s Favorites API ====================
+
+class HttpK8sFavoriteApi implements IK8sFavoriteApi {
+  async getAll(category?: string): Promise<K8sFavoriteWithCluster[]> {
+    const response = await api.get<K8sFavoriteWithCluster[]>('/k8s/favorites', {
+      params: category ? { category } : undefined,
+    })
+    return response.data
+  }
+
+  async get(id: number): Promise<K8sFavorite> {
+    const response = await api.get<K8sFavorite>(`/k8s/favorites/${id}`)
+    return response.data
+  }
+
+  async exists(clusterId: number, namespace: string): Promise<K8sFavorite | null> {
+    try {
+      const response = await api.post<K8sFavorite | null>('/k8s/favorites/check', {
+        cluster_id: clusterId,
+        namespace,
+      })
+      return response.data
+    } catch {
+      return null
+    }
+  }
+
+  async create(request: CreateK8sFavoriteRequest): Promise<K8sFavorite> {
+    const response = await api.post<K8sFavorite>('/k8s/favorites', request)
+    return response.data
+  }
+
+  async update(id: number, request: UpdateK8sFavoriteRequest): Promise<K8sFavorite> {
+    const response = await api.put<K8sFavorite>(`/k8s/favorites/${id}`, request)
+    return response.data
+  }
+
+  async delete(id: number): Promise<void> {
+    await api.delete(`/k8s/favorites/${id}`)
+  }
+}
+
 // ==================== HTTP Adapter Factory ====================
 
 /**
@@ -1034,6 +1081,7 @@ export function createHttpAdapter(): IApiAdapter {
     portForward: new HttpPortForwardApi(),
     settings: new HttpSettingsApi(),
     llmConfig: new HttpLLMConfigApi(),
+    k8sFavorite: new HttpK8sFavoriteApi(),
   }
 }
 

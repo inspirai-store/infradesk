@@ -13,6 +13,7 @@ use crate::db::models::{
     QueryHistory, AddQueryHistoryRequest,
     SavedQuery, CreateSavedQueryRequest, UpdateSavedQueryRequest,
     UserSetting, LLMConfig,
+    K8sFavorite, K8sFavoriteWithCluster, CreateK8sFavoriteRequest, UpdateK8sFavoriteRequest,
 };
 use crate::error::{AppError, AppResult};
 
@@ -264,6 +265,44 @@ impl SqlitePool {
         sqlx::query(
             r#"
             CREATE INDEX IF NOT EXISTS idx_llm_configs_default ON llm_configs(is_default)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create k8s_favorites table
+        sqlx::query(
+            r#"
+            CREATE TABLE IF NOT EXISTS k8s_favorites (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                cluster_id INTEGER NOT NULL,
+                namespace TEXT NOT NULL,
+                description TEXT,
+                category TEXT,
+                sort_order INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(cluster_id, namespace),
+                FOREIGN KEY (cluster_id) REFERENCES clusters(id) ON DELETE CASCADE
+            )
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        // Create indexes for k8s_favorites
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_k8s_favorites_cluster ON k8s_favorites(cluster_id)
+            "#,
+        )
+        .execute(&self.pool)
+        .await?;
+
+        sqlx::query(
+            r#"
+            CREATE INDEX IF NOT EXISTS idx_k8s_favorites_category ON k8s_favorites(category)
             "#,
         )
         .execute(&self.pool)
@@ -1134,6 +1173,170 @@ impl SqlitePool {
 
         if result.rows_affected() == 0 {
             return Err(AppError::NotFound(format!("LLM config {} not found", id)));
+        }
+
+        Ok(())
+    }
+
+    // ==================== K8s Favorites Operations ====================
+
+    /// Get all K8s favorites with cluster info
+    pub async fn get_k8s_favorites(&self, category: Option<&str>) -> AppResult<Vec<K8sFavoriteWithCluster>> {
+        let favorites = if let Some(cat) = category {
+            sqlx::query_as::<_, (i64, String, i64, String, String, Option<String>, Option<String>, i32, Option<String>, Option<String>)>(
+                r#"
+                SELECT f.id, f.name, f.cluster_id, c.name as cluster_name, f.namespace,
+                       f.description, f.category, f.sort_order, f.created_at, f.updated_at
+                FROM k8s_favorites f
+                JOIN clusters c ON f.cluster_id = c.id
+                WHERE f.category = ?
+                ORDER BY f.sort_order, f.name
+                "#,
+            )
+            .bind(cat)
+            .fetch_all(&self.pool)
+            .await?
+        } else {
+            sqlx::query_as::<_, (i64, String, i64, String, String, Option<String>, Option<String>, i32, Option<String>, Option<String>)>(
+                r#"
+                SELECT f.id, f.name, f.cluster_id, c.name as cluster_name, f.namespace,
+                       f.description, f.category, f.sort_order, f.created_at, f.updated_at
+                FROM k8s_favorites f
+                JOIN clusters c ON f.cluster_id = c.id
+                ORDER BY f.sort_order, f.name
+                "#,
+            )
+            .fetch_all(&self.pool)
+            .await?
+        };
+
+        Ok(favorites.into_iter().map(|row| K8sFavoriteWithCluster {
+            id: row.0,
+            name: row.1,
+            cluster_id: row.2,
+            cluster_name: row.3,
+            namespace: row.4,
+            description: row.5,
+            category: row.6,
+            sort_order: row.7,
+            created_at: row.8,
+            updated_at: row.9,
+        }).collect())
+    }
+
+    /// Get a K8s favorite by ID
+    pub async fn get_k8s_favorite(&self, id: i64) -> AppResult<K8sFavorite> {
+        let favorite = sqlx::query_as::<_, K8sFavorite>(
+            r#"
+            SELECT id, name, cluster_id, namespace, description, category, sort_order, created_at, updated_at
+            FROM k8s_favorites
+            WHERE id = ?
+            "#,
+        )
+        .bind(id)
+        .fetch_one(&self.pool)
+        .await?;
+
+        Ok(favorite)
+    }
+
+    /// Check if a K8s favorite exists for the given cluster and namespace
+    pub async fn k8s_favorite_exists(&self, cluster_id: i64, namespace: &str) -> AppResult<Option<K8sFavorite>> {
+        let favorite = sqlx::query_as::<_, K8sFavorite>(
+            r#"
+            SELECT id, name, cluster_id, namespace, description, category, sort_order, created_at, updated_at
+            FROM k8s_favorites
+            WHERE cluster_id = ? AND namespace = ?
+            "#,
+        )
+        .bind(cluster_id)
+        .bind(namespace)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        Ok(favorite)
+    }
+
+    /// Create a new K8s favorite
+    pub async fn create_k8s_favorite(&self, request: &CreateK8sFavoriteRequest) -> AppResult<K8sFavorite> {
+        let result = sqlx::query(
+            r#"
+            INSERT INTO k8s_favorites (name, cluster_id, namespace, description, category, sort_order)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+        )
+        .bind(&request.name)
+        .bind(request.cluster_id)
+        .bind(&request.namespace)
+        .bind(&request.description)
+        .bind(&request.category)
+        .bind(request.sort_order.unwrap_or(0))
+        .execute(&self.pool)
+        .await?;
+
+        let id = result.last_insert_rowid();
+        self.get_k8s_favorite(id).await
+    }
+
+    /// Update an existing K8s favorite
+    pub async fn update_k8s_favorite(&self, id: i64, request: &UpdateK8sFavoriteRequest) -> AppResult<K8sFavorite> {
+        // Build UPDATE query dynamically based on provided fields
+        let mut updates = vec![];
+        let mut params: Vec<String> = vec![];
+
+        if let Some(name) = &request.name {
+            updates.push("name = ?");
+            params.push(name.clone());
+        }
+        if let Some(description) = &request.description {
+            updates.push("description = ?");
+            params.push(description.clone());
+        }
+        if let Some(category) = &request.category {
+            updates.push("category = ?");
+            params.push(category.clone());
+        }
+
+        if updates.is_empty() && request.sort_order.is_none() {
+            return self.get_k8s_favorite(id).await;
+        }
+
+        // Handle sort_order separately as it's an i32
+        let has_sort_order = request.sort_order.is_some();
+        if has_sort_order {
+            updates.push("sort_order = ?");
+        }
+
+        updates.push("updated_at = CURRENT_TIMESTAMP");
+
+        let query_str = format!(
+            "UPDATE k8s_favorites SET {} WHERE id = ?",
+            updates.join(", ")
+        );
+
+        let mut builder = sqlx::query(&query_str);
+        for param in &params {
+            builder = builder.bind(param);
+        }
+        if let Some(sort_order) = request.sort_order {
+            builder = builder.bind(sort_order);
+        }
+        builder = builder.bind(id);
+
+        builder.execute(&self.pool).await?;
+
+        self.get_k8s_favorite(id).await
+    }
+
+    /// Delete a K8s favorite
+    pub async fn delete_k8s_favorite(&self, id: i64) -> AppResult<()> {
+        let result = sqlx::query("DELETE FROM k8s_favorites WHERE id = ?")
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+
+        if result.rows_affected() == 0 {
+            return Err(AppError::NotFound(format!("K8s favorite {} not found", id)));
         }
 
         Ok(())

@@ -22,16 +22,20 @@ import {
   NCheckboxGroup,
   NCheckbox,
   NDivider,
+  NDropdown,
+  NTooltip,
   useMessage
 } from 'naive-ui'
-import { CloudOutline, CheckmarkCircleOutline, CloseCircleOutline, RefreshOutline, AddOutline } from '@vicons/ionicons5'
+import { CloudOutline, CheckmarkCircleOutline, CloseCircleOutline, RefreshOutline, AddOutline, StarOutline, Star } from '@vicons/ionicons5'
 import { useRouter } from 'vue-router'
 import { api } from '@/api/adapter'
 import type { Cluster } from '@/api'
+import type { K8sFavoriteWithCluster, K8sFavorite } from '@/api/types'
 import WorkloadPanel from './components/WorkloadPanel.vue'
 import PodPanel from './components/PodPanel.vue'
 import ConfigPanel from './components/ConfigPanel.vue'
 import NetworkPanel from './components/NetworkPanel.vue'
+import AddFavoriteModal from './components/AddFavoriteModal.vue'
 
 const router = useRouter()
 const message = useMessage()
@@ -58,6 +62,12 @@ const clusterForm = ref({
   environment: 'development'
 })
 const saving = ref(false)
+
+// Favorites State
+const favorites = ref<K8sFavoriteWithCluster[]>([])
+const currentFavorite = ref<K8sFavorite | null>(null)
+const showAddFavoriteModal = ref(false)
+const editingFavorite = ref<K8sFavorite | null>(null)
 
 // Computed
 const selectedCluster = computed(() =>
@@ -90,6 +100,29 @@ const envOptions = [
   { label: 'Staging', value: 'staging' },
   { label: 'Production', value: 'production' }
 ]
+
+// Check if current cluster/namespace is already favorited
+const isFavorited = computed(() => {
+  if (!selectedClusterId.value || !selectedNamespace.value) return false
+  return favorites.value.some(
+    f => f.cluster_id === selectedClusterId.value && f.namespace === selectedNamespace.value
+  )
+})
+
+// Favorites dropdown options
+const favoriteDropdownOptions = computed(() => {
+  if (favorites.value.length === 0) {
+    return [{ label: 'No favorites yet', key: 'empty', disabled: true }]
+  }
+
+  return favorites.value.map(f => ({
+    label: `${f.name} (${f.cluster_name}/${f.namespace})`,
+    key: `fav-${f.id}`,
+    favoriteId: f.id,
+    clusterId: f.cluster_id,
+    namespace: f.namespace
+  }))
+})
 
 // Methods
 async function fetchClusters() {
@@ -293,14 +326,96 @@ async function handleSaveCluster() {
   }
 }
 
+// Favorites Functions
+async function fetchFavorites() {
+  try {
+    favorites.value = await api.k8sFavorite.getAll()
+  } catch (error) {
+    console.error('Failed to fetch favorites:', error)
+  }
+}
+
+async function checkCurrentFavorite() {
+  if (!selectedClusterId.value || !selectedNamespace.value) {
+    currentFavorite.value = null
+    return
+  }
+  try {
+    currentFavorite.value = await api.k8sFavorite.exists(
+      selectedClusterId.value,
+      selectedNamespace.value
+    )
+  } catch {
+    currentFavorite.value = null
+  }
+}
+
+function handleAddFavorite() {
+  editingFavorite.value = null
+  showAddFavoriteModal.value = true
+}
+
+async function handleRemoveFavorite() {
+  if (!currentFavorite.value?.id) return
+
+  try {
+    await api.k8sFavorite.delete(currentFavorite.value.id)
+    message.success('Removed from favorites')
+    currentFavorite.value = null
+    await fetchFavorites()
+  } catch (error) {
+    message.error('Failed to remove: ' + (error as Error).message)
+  }
+}
+
+function handleFavoriteDropdownSelect(key: string) {
+  if (key === 'empty') return
+
+  const option = favoriteDropdownOptions.value.find(o => o.key === key) as {
+    clusterId: number
+    namespace: string
+  } | undefined
+
+  if (option) {
+    const targetNamespace = option.namespace
+
+    // Check if cluster is changing
+    if (selectedClusterId.value !== option.clusterId) {
+      // Cluster is changing, need to wait for namespaces to load
+      selectedClusterId.value = option.clusterId
+      watch(namespaces, (ns) => {
+        if (ns.includes(targetNamespace)) {
+          selectedNamespace.value = targetNamespace
+        }
+      }, { once: true })
+    } else {
+      // Same cluster, just switch namespace directly
+      if (namespaces.value.includes(targetNamespace)) {
+        selectedNamespace.value = targetNamespace
+      }
+    }
+  }
+}
+
+async function handleFavoriteSaved() {
+  await fetchFavorites()
+  await checkCurrentFavorite()
+}
+
 // Lifecycle
 onMounted(() => {
   fetchClusters()
+  fetchFavorites()
 })
 
 // Watch for cluster changes
 watch(selectedClusterId, () => {
   fetchNamespaces()
+})
+
+// Watch for namespace changes to check favorite status
+watch([selectedClusterId, selectedNamespace], () => {
+  checkCurrentFavorite()
 })
 </script>
 
@@ -332,6 +447,31 @@ watch(selectedClusterId, () => {
 
         <!-- Cluster & Namespace Selectors -->
         <NSpace align="center" :size="12">
+          <!-- Favorites Dropdown -->
+          <NDropdown
+            :options="favoriteDropdownOptions"
+            trigger="click"
+            @select="handleFavoriteDropdownSelect"
+          >
+            <NTooltip>
+              <template #trigger>
+                <NButton quaternary>
+                  <template #icon>
+                    <NIcon :color="favorites.length > 0 ? '#f0a020' : undefined">
+                      <Star v-if="favorites.length > 0" />
+                      <StarOutline v-else />
+                    </NIcon>
+                  </template>
+                  Favorites
+                  <NTag v-if="favorites.length > 0" size="tiny" round style="margin-left: 4px">
+                    {{ favorites.length }}
+                  </NTag>
+                </NButton>
+              </template>
+              Quick switch to saved favorites
+            </NTooltip>
+          </NDropdown>
+
           <NSelect
             v-model:value="selectedClusterId"
             :options="clusterOptions"
@@ -354,6 +494,27 @@ watch(selectedClusterId, () => {
             :disabled="!selectedClusterId"
             @update:value="handleNamespaceChange"
           />
+
+          <!-- Favorite Toggle Button -->
+          <NTooltip v-if="selectedClusterId && selectedNamespace">
+            <template #trigger>
+              <NButton
+                quaternary
+                circle
+                :type="isFavorited ? 'warning' : 'default'"
+                @click="isFavorited ? handleRemoveFavorite() : handleAddFavorite()"
+              >
+                <template #icon>
+                  <NIcon :color="isFavorited ? '#f0a020' : undefined">
+                    <Star v-if="isFavorited" />
+                    <StarOutline v-else />
+                  </NIcon>
+                </template>
+              </NButton>
+            </template>
+            {{ isFavorited ? 'Remove from favorites' : 'Add to favorites' }}
+          </NTooltip>
+
           <NButton quaternary circle @click="refresh" :disabled="!selectedClusterId">
             <template #icon>
               <NIcon><RefreshOutline /></NIcon>
@@ -520,6 +681,16 @@ watch(selectedClusterId, () => {
         </NSpace>
       </template>
     </NModal>
+
+    <!-- Add Favorite Modal -->
+    <AddFavoriteModal
+      v-model:show="showAddFavoriteModal"
+      :cluster-id="selectedClusterId"
+      :cluster-name="selectedCluster?.name || ''"
+      :namespace="selectedNamespace"
+      :editing-favorite="editingFavorite"
+      @saved="handleFavoriteSaved"
+    />
   </NLayout>
 </template>
 

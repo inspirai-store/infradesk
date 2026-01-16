@@ -167,6 +167,9 @@ impl PortForwardService {
     /// # Arguments
     /// * `connection_id` - The connection ID to forward
     /// * `preferred_local_port` - Optional preferred local port. If None or 0, auto-assign.
+    ///
+    /// This method waits for the TCP listener to be ready before returning,
+    /// ensuring the caller can immediately use the returned local port.
     pub async fn start(&self, connection_id: i64, preferred_local_port: Option<u16>) -> AppResult<PortForward> {
         // Get connection details
         let connection = self.pool.get_connection(connection_id).await?;
@@ -212,6 +215,9 @@ impl PortForwardService {
 
         let created = self.pool.create_port_forward(&forward).await?;
 
+        // Create ready signal channel
+        let (ready_tx, ready_rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
+
         // Start the actual port forward in background
         let pool = self.pool.clone();
         let active_forwards = self.active_forwards.clone();
@@ -230,6 +236,7 @@ impl PortForwardService {
                 svc,
                 remote_port as u16,
                 local_port,
+                Some(ready_tx),
             ).await {
                 Ok(_) => {
                     log::info!("Port forward {} stopped gracefully", fwd_id);
@@ -241,10 +248,37 @@ impl PortForwardService {
             }
         });
 
-        Ok(created)
+        // Wait for the TCP listener to be ready (10 second timeout)
+        match tokio::time::timeout(std::time::Duration::from_secs(10), ready_rx).await {
+            Ok(Ok(Ok(()))) => {
+                // TCP listener is ready, return with active status
+                let mut result = created;
+                result.status = "active".to_string();
+                Ok(result)
+            }
+            Ok(Ok(Err(e))) => {
+                // Startup failed with error
+                let _ = self.pool.update_port_forward_status(&forward_id, "error", Some(&e)).await;
+                Err(AppError::PortForward(e))
+            }
+            Ok(Err(_)) => {
+                // Channel was dropped (background task panicked or exited)
+                let _ = self.pool.update_port_forward_status(&forward_id, "error", Some("Startup failed unexpectedly")).await;
+                Err(AppError::PortForward("Port forward startup failed unexpectedly".to_string()))
+            }
+            Err(_) => {
+                // Timeout
+                let _ = self.pool.update_port_forward_status(&forward_id, "error", Some("Startup timeout")).await;
+                Err(AppError::PortForward("Port forward startup timeout (10s)".to_string()))
+            }
+        }
     }
 
     /// Run the actual port forward
+    ///
+    /// # Arguments
+    /// * `ready_tx` - Optional oneshot sender to signal when TCP listener is ready.
+    ///   If provided, the caller will wait for this signal before using the port.
     async fn run_port_forward(
         pool: SqlitePool,
         active_forwards: Arc<RwLock<HashMap<String, ActiveForward>>>,
@@ -254,7 +288,15 @@ impl PortForwardService {
         service_name: String,
         remote_port: u16,
         local_port: u16,
+        ready_tx: Option<tokio::sync::oneshot::Sender<Result<(), String>>>,
     ) -> AppResult<()> {
+        // Helper to send error through ready_tx if provided
+        let send_error = |ready_tx: Option<tokio::sync::oneshot::Sender<Result<(), String>>>, msg: String| {
+            if let Some(tx) = ready_tx {
+                let _ = tx.send(Err(msg));
+            }
+        };
+
         // Create shutdown channel
         let (shutdown_tx, _) = tokio::sync::broadcast::channel::<()>(1);
 
@@ -271,25 +313,47 @@ impl PortForwardService {
         // Create K8s client
         let client = {
             let service = PortForwardService::new(pool.clone());
-            service.get_k8s_client(&connection).await?
+            match service.get_k8s_client(&connection).await {
+                Ok(c) => c,
+                Err(e) => {
+                    send_error(ready_tx, e.to_string());
+                    return Err(e);
+                }
+            }
         };
 
         // Find pod for service
         let pod_name = {
             let service = PortForwardService::new(pool.clone());
-            service.find_pod_for_service(&client, &namespace, &service_name).await?
+            match service.find_pod_for_service(&client, &namespace, &service_name).await {
+                Ok(p) => p,
+                Err(e) => {
+                    send_error(ready_tx, e.to_string());
+                    return Err(e);
+                }
+            }
         };
 
         log::info!("Starting port forward {} -> {}:{} via pod {}",
             local_port, service_name, remote_port, pod_name);
 
+        // Bind local listener
+        let listener = match tokio::net::TcpListener::bind(format!("127.0.0.1:{}", local_port)).await {
+            Ok(l) => l,
+            Err(e) => {
+                let msg = format!("Failed to bind to port {}: {}", local_port, e);
+                send_error(ready_tx, msg.clone());
+                return Err(AppError::PortForward(msg));
+            }
+        };
+
+        // TCP listener is ready - send success signal
+        if let Some(tx) = ready_tx {
+            let _ = tx.send(Ok(()));
+        }
+
         // Update status to active
         pool.update_port_forward_status(&forward_id, "active", None).await?;
-
-        // Bind local listener
-        let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", local_port))
-            .await
-            .map_err(|e| AppError::PortForward(format!("Failed to bind to port {}: {}", local_port, e)))?;
 
         let pods: Api<Pod> = Api::namespaced(client.clone(), &namespace);
         let mut shutdown_rx = shutdown_tx.subscribe();

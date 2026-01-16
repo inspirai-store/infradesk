@@ -259,6 +259,13 @@ pub fn run() {
             commands::delete_llm_config,
             commands::set_default_llm_config,
             commands::get_llm_api_key,
+            // K8s favorites operations
+            commands::get_k8s_favorites,
+            commands::get_k8s_favorite,
+            commands::k8s_favorite_exists,
+            commands::create_k8s_favorite,
+            commands::update_k8s_favorite,
+            commands::delete_k8s_favorite,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
