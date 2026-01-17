@@ -25,7 +25,7 @@ jobs:
             target: aarch64-apple-darwin
             name: macOS-arm64
           # macOS Intel
-          - platform: macos-13
+          - platform: macos-15-intel
             target: x86_64-apple-darwin
             name: macOS-x64
           # Windows x64
@@ -77,6 +77,9 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm --dir services/zeni-x/frontend install
 
+      - name: Install Tauri CLI
+        run: cargo install tauri-cli --version "^2.0" --locked
+
       # 更新版本号
       - name: Update version (workflow_dispatch)
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.version != ''
@@ -106,14 +109,13 @@ jobs:
             sed -i '' "s/^version = \"[^\"]*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
           fi
 
-      - name: Build with tauri-action
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          projectPath: services/zeni-x/frontend
-          tauriScript: pnpm tauri
-          args: --target ${{ matrix.target }} --bin zeni-x
+      - name: Build frontend
+        run: pnpm --dir services/zeni-x/frontend build
+
+      - name: Build Tauri app
+        run: |
+          cd src-tauri
+          cargo tauri build --target ${{ matrix.target }} --bundles app,dmg,msi,nsis
 
       # 上传 macOS 产物
       - name: Upload macOS artifacts
