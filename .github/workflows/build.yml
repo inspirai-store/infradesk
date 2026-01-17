@@ -112,10 +112,17 @@ jobs:
       - name: Build frontend
         run: pnpm --dir services/zeni-x/frontend build
 
-      - name: Build Tauri app
+      - name: Build Tauri app (macOS)
+        if: startsWith(matrix.platform, 'macos')
         run: |
           cd src-tauri
-          cargo tauri build --target ${{ matrix.target }} --bundles app,dmg,msi,nsis
+          cargo tauri build --target ${{ matrix.target }} --bundles dmg
+
+      - name: Build Tauri app (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          cd src-tauri
+          cargo tauri build --target ${{ matrix.target }} --bundles msi,nsis
 
       # 上传 macOS 产物
       - name: Upload macOS artifacts
