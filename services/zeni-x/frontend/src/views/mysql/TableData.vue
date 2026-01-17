@@ -1,11 +1,11 @@
 <script setup lang="ts">
 import { onMounted, computed, ref, watch, h } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { 
-  NCard, 
-  NSpace, 
-  NButton, 
-  NIcon, 
+import {
+  NCard,
+  NSpace,
+  NButton,
+  NIcon,
   NDataTable,
   NBreadcrumb,
   NBreadcrumbItem,
@@ -16,6 +16,8 @@ import {
   NForm,
   NFormItem,
   NInput,
+  NDropdown,
+  NTag,
   useMessage,
   useDialog,
 } from 'naive-ui'
@@ -28,14 +30,18 @@ import {
   CheckmarkCircleOutline,
   CloseCircleOutline,
   SaveOutline,
+  EyeOutline,
+  CreateOutline,
+  EllipsisVertical,
 } from '@vicons/ionicons5'
 import { useMySQLStore } from '@/stores/mysql'
 import { mysqlApi } from '@/api'
-import type { DataTableColumns } from 'naive-ui'
+import type { DataTableColumns, DropdownOption } from 'naive-ui'
 import IndexManager from './components/IndexManager.vue'
 import ForeignKeyManager from './components/ForeignKeyManager.vue'
 import ExportDialog from './components/ExportDialog.vue'
 import ImportDialog from './components/ImportDialog.vue'
+import CellDetailModal from './components/CellDetailModal.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -75,6 +81,140 @@ const newRowData = ref<Record<string, string>>({})
 // Export/Import dialog state
 const showExportDialog = ref(false)
 const showImportDialog = ref(false)
+
+// Cell detail modal state
+const showCellDetail = ref(false)
+const cellDetailValue = ref<unknown>(null)
+const cellDetailColumn = ref('')
+const cellDetailColumnType = ref('')
+const cellDetailMode = ref<'view' | 'edit'>('view')
+const cellDetailRowIndex = ref(-1)
+
+// 数据显示阈值
+const MAX_CELL_DISPLAY_LENGTH = 100
+
+// 格式化单元格显示值
+function formatCellValue(val: unknown, columnType?: string): { display: string; isLong: boolean; isBlob: boolean; isObject: boolean } {
+  if (val === null || val === undefined) {
+    return { display: 'NULL', isLong: false, isBlob: false, isObject: false }
+  }
+
+  const colType = (columnType || '').toLowerCase()
+  const isBlob = colType.includes('blob') || colType.includes('binary') || colType.includes('varbinary')
+
+  if (isBlob) {
+    const size = typeof val === 'string' ? val.length : 0
+    return { display: `[BLOB: ${formatSize(size)}]`, isLong: true, isBlob: true, isObject: false }
+  }
+
+  if (typeof val === 'object') {
+    try {
+      const jsonStr = JSON.stringify(val)
+      if (jsonStr.length > MAX_CELL_DISPLAY_LENGTH) {
+        return { display: jsonStr.substring(0, MAX_CELL_DISPLAY_LENGTH) + '...', isLong: true, isBlob: false, isObject: true }
+      }
+      return { display: jsonStr, isLong: false, isBlob: false, isObject: true }
+    } catch {
+      return { display: '[Object]', isLong: true, isBlob: false, isObject: true }
+    }
+  }
+
+  const strVal = String(val)
+  if (strVal.length > MAX_CELL_DISPLAY_LENGTH) {
+    return { display: strVal.substring(0, MAX_CELL_DISPLAY_LENGTH) + '...', isLong: true, isBlob: false, isObject: false }
+  }
+  return { display: strVal, isLong: false, isBlob: false, isObject: false }
+}
+
+// 格式化大小
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+// 获取列类型
+function getColumnType(columnName: string): string {
+  const col = store.tableSchema?.columns.find(c => c.name === columnName)
+  return col?.type || 'unknown'
+}
+
+// 打开单元格详情
+function openCellDetail(rowIndex: number, column: string, mode: 'view' | 'edit') {
+  cellDetailRowIndex.value = rowIndex
+  cellDetailColumn.value = column
+  cellDetailValue.value = rows.value[rowIndex][column]
+  cellDetailColumnType.value = getColumnType(column)
+  cellDetailMode.value = mode
+  showCellDetail.value = true
+}
+
+// 保存单元格详情编辑
+function handleCellDetailSave(newValue: unknown) {
+  if (cellDetailRowIndex.value < 0) return
+
+  const rowIndex = cellDetailRowIndex.value
+  const column = cellDetailColumn.value
+  const oldValue = rows.value[rowIndex][column]
+
+  if (newValue === oldValue) return
+
+  const key = `${rowIndex}-${column}`
+  modifications.value.set(key, { rowIndex, column, oldValue, newValue })
+  message.success('修改已暂存，点击"保存全部"提交')
+}
+
+// 导出单元格数据
+function exportCellData(rowIndex: number, column: string) {
+  const val = rows.value[rowIndex][column]
+  let content: string
+  let filename: string
+  let mimeType: string
+
+  if (typeof val === 'object' && val !== null) {
+    content = JSON.stringify(val, null, 2)
+    filename = `${table.value}_${column}_row${rowIndex + 1}.json`
+    mimeType = 'application/json'
+  } else {
+    content = String(val ?? '')
+    filename = `${table.value}_${column}_row${rowIndex + 1}.txt`
+    mimeType = 'text/plain'
+  }
+
+  const blob = new Blob([content], { type: mimeType })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  a.click()
+  URL.revokeObjectURL(url)
+
+  message.success('导出成功')
+}
+
+// 右键菜单选项
+const cellMenuOptions: DropdownOption[] = [
+  { label: '查看', key: 'view', icon: () => h(NIcon, { size: 14 }, { default: () => h(EyeOutline) }) },
+  { label: '编辑', key: 'edit', icon: () => h(NIcon, { size: 14 }, { default: () => h(CreateOutline) }) },
+  { label: '导出', key: 'export', icon: () => h(NIcon, { size: 14 }, { default: () => h(DownloadOutline) }) },
+  { type: 'divider', key: 'd1' },
+  { label: '取消', key: 'cancel' },
+]
+
+// 处理右键菜单选择
+function handleCellMenuSelect(key: string, rowIndex: number, column: string) {
+  switch (key) {
+    case 'view':
+      openCellDetail(rowIndex, column, 'view')
+      break
+    case 'edit':
+      openCellDetail(rowIndex, column, 'edit')
+      break
+    case 'export':
+      exportCellData(rowIndex, column)
+      break
+  }
+}
 
 // 获取单元格修改状态
 function getCellModification(rowIndex: number, column: string): CellModification | null {
@@ -239,11 +379,13 @@ const tableColumns = computed<DataTableColumns<Record<string, unknown>>>(() => {
   const cols: DataTableColumns<Record<string, unknown>> = columns.value.map(col => ({
     title: col,
     key: col,
-    ellipsis: { tooltip: true },
+    ellipsis: { tooltip: false }, // 禁用默认 tooltip，使用自定义显示
     render(row, index) {
       const isEditing = editingCell.value?.rowIndex === index && editingCell.value?.column === col
       const isModified = isCellModified(index, col)
       const val = row[col]
+      const columnType = getColumnType(col)
+      const formatted = formatCellValue(val, columnType)
 
       if (isEditing) {
         return h('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } }, [
@@ -277,12 +419,14 @@ const tableColumns = computed<DataTableColumns<Record<string, unknown>>>(() => {
 
       if (isModified) {
         const mod = getCellModification(index, col)!
-        return h('div', { 
+        const oldFormatted = formatCellValue(mod.oldValue, columnType)
+        const newFormatted = formatCellValue(mod.newValue, columnType)
+        return h('div', {
           style: { display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' },
           onClick: () => startEdit(index, col)
         }, [
-          h('span', { style: { textDecoration: 'line-through', opacity: 0.5, fontSize: '11px' } }, String(mod.oldValue ?? 'NULL')),
-          h('span', { style: { color: '#f0a020', fontWeight: 'bold' } }, String(mod.newValue ?? 'NULL')),
+          h('span', { style: { textDecoration: 'line-through', opacity: 0.5, fontSize: '11px' } }, oldFormatted.display),
+          h('span', { style: { color: '#f0a020', fontWeight: 'bold' } }, newFormatted.display),
           h(NButton, {
             size: 'tiny',
             quaternary: true,
@@ -295,10 +439,62 @@ const tableColumns = computed<DataTableColumns<Record<string, unknown>>>(() => {
         ])
       }
 
-      return h('span', {
-        onClick: () => startEdit(index, col),
-        style: { cursor: 'pointer', display: 'block', width: '100%', minHeight: '1.5em' }
-      }, val === null ? 'NULL' : (typeof val === 'object' ? JSON.stringify(val) : String(val)))
+      // 构建单元格内容
+      const cellContent: any[] = []
+
+      // 数据类型标签（仅对 BLOB 和 JSON 显示）
+      if (formatted.isBlob) {
+        cellContent.push(h(NTag, { size: 'tiny', type: 'warning', style: { marginRight: '4px' } }, { default: () => 'BLOB' }))
+      } else if (formatted.isObject) {
+        cellContent.push(h(NTag, { size: 'tiny', type: 'info', style: { marginRight: '4px' } }, { default: () => 'JSON' }))
+      }
+
+      // 数据内容
+      cellContent.push(h('span', {
+        class: val === null ? 'null-value' : '',
+        style: {
+          flex: 1,
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          cursor: formatted.isLong ? 'pointer' : 'text',
+          opacity: val === null ? 0.5 : 1,
+          fontStyle: val === null ? 'italic' : 'normal',
+        },
+        onClick: () => {
+          if (!formatted.isLong && !formatted.isBlob) {
+            startEdit(index, col)
+          }
+        }
+      }, formatted.display))
+
+      // 长数据或特殊数据添加操作下拉菜单
+      if (formatted.isLong || formatted.isBlob || formatted.isObject) {
+        cellContent.push(
+          h(NDropdown, {
+            trigger: 'click',
+            options: cellMenuOptions,
+            onSelect: (key: string) => handleCellMenuSelect(key, index, col)
+          }, {
+            default: () => h(NButton, {
+              size: 'tiny',
+              quaternary: true,
+              circle: true,
+              style: { marginLeft: '4px', flexShrink: 0 },
+              onClick: (e: Event) => e.stopPropagation()
+            }, { icon: () => h(NIcon, { size: 12 }, { default: () => h(EllipsisVertical) }) })
+          })
+        )
+      }
+
+      return h('div', {
+        style: {
+          display: 'flex',
+          alignItems: 'center',
+          width: '100%',
+          minHeight: '1.5em',
+        }
+      }, cellContent)
     },
   }))
   
@@ -684,6 +880,16 @@ watch([database, table], () => {
       :table="table"
       :columns="columns"
       @imported="onImported"
+    />
+
+    <!-- Cell Detail Modal -->
+    <CellDetailModal
+      v-model:show="showCellDetail"
+      :value="cellDetailValue"
+      :column="cellDetailColumn"
+      :column-type="cellDetailColumnType"
+      :mode="cellDetailMode"
+      @save="handleCellDetailSave"
     />
   </div>
 </template>
