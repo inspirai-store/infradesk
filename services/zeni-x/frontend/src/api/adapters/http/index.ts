@@ -239,6 +239,14 @@ class HttpClusterApi implements IClusterApi {
 // ==================== HTTP MySQL API ====================
 
 class HttpMysqlApi implements IMysqlApi {
+  private getConnectionId(): number {
+    const connectionId = getActiveConnectionId('mysql')
+    if (!connectionId) {
+      throw new Error('No active MySQL connection')
+    }
+    return connectionId
+  }
+
   async getInfo(): Promise<unknown> {
     const response = await api.get('/mysql/info')
     return response.data
@@ -349,12 +357,20 @@ class HttpMysqlApi implements IMysqlApi {
   }
 
   async insertRow(database: string, table: string, data: Record<string, unknown>): Promise<unknown> {
-    const response = await api.post(`/mysql/databases/${database}/tables/${table}/rows`, data)
+    const connectionId = this.getConnectionId()
+    const response = await api.post(`/mysql/databases/${database}/tables/${table}/rows`, {
+      connection_id: connectionId,
+      data,
+    })
     return response.data
   }
 
   async updateRow(database: string, table: string, data: UpdateRowRequest): Promise<unknown> {
-    const response = await api.put(`/mysql/databases/${database}/tables/${table}/rows`, data)
+    const connectionId = this.getConnectionId()
+    const response = await api.put(`/mysql/databases/${database}/tables/${table}/rows`, {
+      connection_id: connectionId,
+      ...data,
+    })
     return response.data
   }
 
@@ -365,7 +381,9 @@ class HttpMysqlApi implements IMysqlApi {
     primaryValue: unknown,
     updates: Record<string, unknown>
   ): Promise<unknown> {
-    const response = await api.put(`/mysql/databases/${database}/tables/${table}/record`, {
+    const connectionId = this.getConnectionId()
+    const response = await api.put(`/mysql/databases/${database}/tables/${table}/rows`, {
+      connection_id: connectionId,
       primary_key: primaryKey,
       primary_value: primaryValue,
       updates,
@@ -374,12 +392,19 @@ class HttpMysqlApi implements IMysqlApi {
   }
 
   async deleteRow(database: string, table: string, where: Record<string, unknown>): Promise<unknown> {
-    const response = await api.delete(`/mysql/databases/${database}/tables/${table}/rows`, { data: where })
+    const connectionId = this.getConnectionId()
+    const response = await api.delete(`/mysql/databases/${database}/tables/${table}/rows`, {
+      data: {
+        connection_id: connectionId,
+        where_clause: where,
+      }
+    })
     return response.data
   }
 
   async executeQuery(database: string, query: string): Promise<unknown> {
-    const response = await api.post('/mysql/query', { database, query })
+    const connectionId = this.getConnectionId()
+    const response = await api.post('/mysql/query', { connection_id: connectionId, database, query })
     return response.data
   }
 

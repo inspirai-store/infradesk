@@ -1,12 +1,18 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { resolve } from 'path'
+import monacoEditorPlugin from 'vite-plugin-monaco-editor'
 
 // Read port from environment variable, default to 15073
 const serverPort = parseInt(process.env.VITE_PORT || '15073', 10)
 
 export default defineConfig({
-  plugins: [vue()],
+  plugins: [
+    vue(),
+    (monacoEditorPlugin as any).default({
+      languageWorkers: ['editorWorkerService'],
+    }),
+  ],
   resolve: {
     alias: {
       '@': resolve(__dirname, 'src'),

@@ -18,6 +18,7 @@ import {
   NInput,
   NDropdown,
   NTag,
+  NText,
   useMessage,
   useDialog,
 } from 'naive-ui'
@@ -388,33 +389,20 @@ const tableColumns = computed<DataTableColumns<Record<string, unknown>>>(() => {
       const formatted = formatCellValue(val, columnType)
 
       if (isEditing) {
-        return h('div', { style: { display: 'flex', alignItems: 'center', gap: '4px' } }, [
-          h(NInput, {
-            size: 'tiny',
-            value: String(editValue.value ?? ''),
-            onUpdateValue: (v: string) => { editValue.value = v },
-            onKeyup: (e: KeyboardEvent) => {
-              if (e.key === 'Enter') saveEdit()
-              if (e.key === 'Escape') cancelEdit()
-            },
-            autofocus: true,
-            style: { flex: 1 }
-          }),
-          h(NButton, {
-            size: 'tiny',
-            quaternary: true,
-            circle: true,
-            type: 'success',
-            onClick: (e: Event) => { e.stopPropagation(); saveEdit() }
-          }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(CheckmarkCircleOutline) }) }),
-          h(NButton, {
-            size: 'tiny',
-            quaternary: true,
-            circle: true,
-            type: 'error',
-            onClick: (e: Event) => { e.stopPropagation(); cancelEdit() }
-          }, { icon: () => h(NIcon, { size: 14 }, { default: () => h(CloseCircleOutline) }) })
-        ])
+        // 编辑模式：只显示输入框，通过 Enter 确认、Escape 取消、失焦自动暂存
+        return h(NInput, {
+          size: 'tiny',
+          value: String(editValue.value ?? ''),
+          onUpdateValue: (v: string) => { editValue.value = v },
+          onKeyup: (e: KeyboardEvent) => {
+            if (e.key === 'Enter') saveEdit()
+            if (e.key === 'Escape') cancelEdit()
+          },
+          onBlur: () => saveEdit(), // 失焦时自动暂存修改
+          autofocus: true,
+          style: { width: '100%' },
+          placeholder: 'Enter 确认 / Esc 取消'
+        })
       }
 
       if (isModified) {
@@ -697,20 +685,28 @@ watch([database, table], () => {
         <NCard class="glass-card">
           <template #header>
             <NSpace align="center" justify="space-between">
-              <NSpace align="center" :size="8">
-                <span style="font-size: 12px">共 {{ total.toLocaleString() }} 行</span>
-                <NText v-if="hasModifications" type="warning" strong style="font-size: 11px">
-                  (有 {{ modifiedCount }} 处修改待保存)
+              <NSpace align="center" :size="12">
+                <span style="font-size: 12px; color: var(--n-text-color-3)">共 {{ total.toLocaleString() }} 行</span>
+                <NTag v-if="hasModifications" type="warning" size="small" round>
+                  {{ modifiedCount }} 处修改待保存
+                </NTag>
+                <NText v-if="editingCell" depth="3" style="font-size: 11px; font-style: italic">
+                  编辑中... (Enter 确认 / Esc 取消)
                 </NText>
               </NSpace>
-              <NSpace :size="4">
+              <NSpace :size="8">
                 <template v-if="hasModifications">
-                  <NButton size="tiny" ghost @click="discardAllChanges">放弃修改</NButton>
-                  <NButton size="tiny" type="primary" :loading="isSaving" @click="handleSaveAllChanges">
+                  <NButton size="small" tertiary type="error" @click="discardAllChanges">
+                    <template #icon>
+                      <NIcon size="14"><CloseCircleOutline /></NIcon>
+                    </template>
+                    放弃修改
+                  </NButton>
+                  <NButton size="small" type="primary" :loading="isSaving" @click="handleSaveAllChanges">
                     <template #icon>
                       <NIcon size="14"><CheckmarkCircleOutline /></NIcon>
                     </template>
-                    保存全部
+                    保存全部 ({{ modifiedCount }})
                   </NButton>
                 </template>
                 <NButton size="tiny" @click="handleRefresh">

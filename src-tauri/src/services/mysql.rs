@@ -403,19 +403,20 @@ impl MysqlService {
     }
 
     /// Execute a SQL query
+    /// Uses raw_sql to avoid prepared statements, which some MySQL proxies don't support
     pub async fn execute_query(&self, database: &str, query: &str) -> AppResult<MysqlQueryResult> {
-        // Use the specified database
-        sqlx::query(&format!("USE `{}`", database))
-            .execute(&self.pool)
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
         let start = Instant::now();
         let query_type = detect_query_type(query);
 
+        // Combine USE and query into a single raw_sql call to ensure same connection
+        // For SELECT queries, we need special handling to get rows back
         if query_type == "select" || query_type == "show" || query_type == "describe" {
-            // SELECT query - return rows
-            let rows = sqlx::query(query)
+            // For queries that return rows, use USE statement first, then the query
+            // Build the full query with USE prepended
+            let full_query = format!("USE `{}`; {}", database, query);
+
+            // SELECT query - return rows using raw_sql to avoid prepared statements
+            let rows = sqlx::raw_sql(&full_query)
                 .fetch_all(&self.pool)
                 .await
                 .map_err(|e| AppError::Database(e.to_string()))?;
@@ -433,7 +434,8 @@ impl MysqlService {
             })
         } else {
             // Non-SELECT query - return affected rows count
-            let result = sqlx::query(query)
+            let full_query = format!("USE `{}`; {}", database, query);
+            let result = sqlx::raw_sql(&full_query)
                 .execute(&self.pool)
                 .await
                 .map_err(|e| AppError::Database(e.to_string()))?;

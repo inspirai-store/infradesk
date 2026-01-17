@@ -172,6 +172,14 @@ function applyAISQL(sql: string) {
   queryText.value = sql
   showAIPanel.value = false
 }
+
+// 处理键盘事件 (Ctrl+Enter 或 Cmd+Enter 执行查询)
+function handleKeydown(e: KeyboardEvent) {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+    e.preventDefault()
+    executeQuery()
+  }
+}
 </script>
 
 <template>
@@ -250,11 +258,14 @@ function applyAISQL(sql: string) {
 
       <!-- Query Input -->
       <div class="editor-container">
-        <MonacoSQLEditor
-          ref="editorRef"
-          v-model="queryText"
-          :database="selectedDatabase"
-          @execute="executeQuery"
+        <!-- Fallback textarea when Monaco fails to load -->
+        <NInput
+          v-model:value="queryText"
+          type="textarea"
+          :rows="8"
+          placeholder="输入 SQL 语句..."
+          style="font-family: 'Monaco', 'Menlo', 'Consolas', monospace; font-size: 13px;"
+          @keydown="handleKeydown"
         />
       </div>
 
