@@ -20,14 +20,12 @@ function handleConnectionChange() {
   }
 }
 
-onMounted(() => {
-  connStore.initFromStorage()
-  connStore.fetchConnections().then(() => {
-    if (connStore.hasActiveConnection('mysql')) {
-      store.fetchServerInfo()
-      store.fetchDatabases()
-    }
-  })
+onMounted(async () => {
+  await connStore.initialize()
+  if (connStore.hasActiveConnection('mysql')) {
+    store.fetchServerInfo()
+    store.fetchDatabases()
+  }
 })
 
 // Watch for connection changes

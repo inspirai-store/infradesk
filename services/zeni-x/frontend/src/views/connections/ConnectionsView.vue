@@ -309,9 +309,12 @@ function handleImported(_count: number) {
   store.fetchConnections()
 }
 
-onMounted(() => {
-  store.initFromStorage()
-  store.fetchConnections()
+onMounted(async () => {
+  // Use the new initialize() method which properly sequences:
+  // 1. Load active connections from backend settings
+  // 2. Check localStorage for migration (legacy support)
+  // 3. Then fetch connections list
+  await store.initialize()
 })
 </script>
 

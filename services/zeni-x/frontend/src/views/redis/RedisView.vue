@@ -19,14 +19,12 @@ function handleConnectionChange() {
   }
 }
 
-onMounted(() => {
-  connStore.initFromStorage()
-  connStore.fetchConnections().then(() => {
-    if (connStore.hasActiveConnection('redis')) {
-      store.fetchServerInfo()
-      store.fetchKeys()
-    }
-  })
+onMounted(async () => {
+  await connStore.initialize()
+  if (connStore.hasActiveConnection('redis')) {
+    store.fetchServerInfo()
+    store.fetchKeys()
+  }
 })
 
 // Watch for connection changes

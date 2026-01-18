@@ -85,13 +85,37 @@ pub async fn test_k8s_connection(
     pool: State<'_, SqlitePool>,
     data: TestK8sConnectionRequest,
 ) -> Result<TestConnectionResult, AppError> {
-    // Get kubeconfig: from request, or look up from cluster if cluster_id is provided
+    // 30-second overall timeout for the entire test
+    log::info!("[test-k8s] Starting connection test for {} service {}/{}",
+        data.conn_type, data.k8s_namespace, data.k8s_service_name);
+
+    match tokio::time::timeout(
+        Duration::from_secs(30),
+        test_k8s_connection_inner(pool.inner().clone(), &data)
+    ).await {
+        Ok(result) => {
+            log::info!("[test-k8s] Connection test completed");
+            result
+        },
+        Err(_) => {
+            log::error!("[test-k8s] Connection test timed out after 30 seconds");
+            Ok(TestConnectionResult::failure(
+                "Connection test timed out after 30 seconds. Please check: 1) K8s cluster connectivity, 2) Service exists in namespace, 3) Pod is running"
+            ))
+        }
+    }
+}
+
+async fn test_k8s_connection_inner(
+    pool: SqlitePool,
+    data: &TestK8sConnectionRequest,
+) -> Result<TestConnectionResult, AppError> {
+    // Step 1: Get kubeconfig
+    log::info!("[test-k8s] Step 1: Getting kubeconfig...");
     let (kubeconfig_content, context) = if let Some(kc) = &data.kubeconfig {
-        // Use kubeconfig from request
         (kc.clone(), data.context.clone())
     } else if let Some(cluster_id) = data.cluster_id {
-        // Look up kubeconfig from cluster
-        log::info!("Looking up kubeconfig for cluster ID: {}", cluster_id);
+        log::info!("[test-k8s] Looking up kubeconfig for cluster ID: {}", cluster_id);
         let cluster = pool.get_cluster(cluster_id).await?;
         let kc = cluster.kubeconfig.ok_or_else(|| {
             AppError::K8s(format!(
@@ -99,17 +123,17 @@ pub async fn test_k8s_connection(
                 cluster.name
             ))
         })?;
-        // Use context from cluster if not provided in request
         let ctx = data.context.clone().or(cluster.context);
         (kc, ctx)
     } else {
-        // Try to use default kubeconfig
         return Err(AppError::K8s(
             "No kubeconfig provided and no cluster_id to look up. Please upload a kubeconfig file.".to_string()
         ));
     };
+    log::info!("[test-k8s] Step 1: Kubeconfig obtained successfully");
 
-    // Create K8s client from kubeconfig
+    // Step 2: Create K8s client from kubeconfig
+    log::info!("[test-k8s] Step 2: Creating K8s client...");
     let kubeconfig = Kubeconfig::from_yaml(&kubeconfig_content)
         .map_err(|e| AppError::K8s(format!("Failed to parse kubeconfig: {}", e)))?;
 
@@ -124,17 +148,21 @@ pub async fn test_k8s_connection(
 
     let client = Client::try_from(config)
         .map_err(|e| AppError::K8s(format!("Failed to create K8s client: {}", e)))?;
+    log::info!("[test-k8s] Step 2: K8s client created successfully");
 
-    // Find a pod for the service
+    // Step 3: Find a pod for the service
+    log::info!("[test-k8s] Step 3: Finding pod for service {}/{}...",
+        data.k8s_namespace, data.k8s_service_name);
     let pod_name = find_pod_for_service(&client, &data.k8s_namespace, &data.k8s_service_name).await?;
+    log::info!("[test-k8s] Step 3: Found pod: {}", pod_name);
 
-    // Find an available local port
+    // Step 4: Find an available local port
     let local_port = find_available_port()?;
+    log::info!("[test-k8s] Step 4: Allocated local port: {}", local_port);
 
-    log::info!("Testing K8s connection via port forward: localhost:{} -> {}:{}",
-        local_port, data.k8s_service_name, data.k8s_service_port);
-
-    // Create port forward
+    // Step 5: Create port forward
+    log::info!("[test-k8s] Step 5: Creating port forward localhost:{} -> {}:{}",
+        local_port, pod_name, data.k8s_service_port);
     let pods: Api<Pod> = Api::namespaced(client.clone(), &data.k8s_namespace);
     let mut pf = pods.portforward(&pod_name, &[data.k8s_service_port as u16])
         .await
@@ -143,6 +171,7 @@ pub async fn test_k8s_connection(
     // Get the port stream
     let upstream = pf.take_stream(data.k8s_service_port as u16)
         .ok_or_else(|| AppError::K8s("Failed to get port stream".to_string()))?;
+    log::info!("[test-k8s] Step 5: Port forward established");
 
     // Spawn a task to handle the port forward connection
     let listener = tokio::net::TcpListener::bind(format!("127.0.0.1:{}", local_port))
@@ -173,8 +202,12 @@ pub async fn test_k8s_connection(
     // Give the port forward a moment to initialize
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Test the connection through the forwarded port
-    let result = test_connection_through_port(&data, local_port).await;
+    // Step 6: Test the connection through the forwarded port
+    log::info!("[test-k8s] Step 6: Testing {} connection on local port {}...",
+        data.conn_type, local_port);
+    let result = test_connection_through_port(data, local_port).await;
+    log::info!("[test-k8s] Step 6: Connection test result: {:?}",
+        result.as_ref().map(|r| r.success));
 
     // Stop the port forward
     let _ = stop_tx.send(());
@@ -326,26 +359,54 @@ async fn test_redis_connection(
         format!("redis://127.0.0.1:{}", local_port)
     };
 
+    log::info!("[test-k8s] Redis: Connecting to {}", url.replace(password.unwrap_or(""), "***"));
+
     let result = redis::Client::open(url.as_str());
 
     match result {
         Ok(client) => {
-            let con_result = client.get_multiplexed_tokio_connection().await;
+            // Add 10-second timeout for Redis connection
+            let con_result = tokio::time::timeout(
+                Duration::from_secs(10),
+                client.get_multiplexed_tokio_connection()
+            ).await;
 
             match con_result {
-                Ok(mut con) => {
-                    let pong: Result<String, _> = redis::cmd("PING")
-                        .query_async(&mut con)
-                        .await;
+                Ok(Ok(mut con)) => {
+                    // Add 5-second timeout for PING command
+                    let pong: Result<Result<String, _>, _> = tokio::time::timeout(
+                        Duration::from_secs(5),
+                        redis::cmd("PING").query_async(&mut con)
+                    ).await;
 
                     match pong {
-                        Ok(_) => Ok(TestConnectionResult::success("Connected to Redis via K8s port forward")),
-                        Err(e) => Ok(TestConnectionResult::failure(e.to_string())),
+                        Ok(Ok(_)) => {
+                            log::info!("[test-k8s] Redis: PING successful");
+                            Ok(TestConnectionResult::success("Connected to Redis via K8s port forward"))
+                        },
+                        Ok(Err(e)) => {
+                            log::error!("[test-k8s] Redis: PING failed: {}", e);
+                            Ok(TestConnectionResult::failure(e.to_string()))
+                        },
+                        Err(_) => {
+                            log::error!("[test-k8s] Redis: PING timed out");
+                            Ok(TestConnectionResult::failure("Redis PING command timed out after 5 seconds"))
+                        }
                     }
                 }
-                Err(e) => Ok(TestConnectionResult::failure(e.to_string())),
+                Ok(Err(e)) => {
+                    log::error!("[test-k8s] Redis: Connection failed: {}", e);
+                    Ok(TestConnectionResult::failure(e.to_string()))
+                },
+                Err(_) => {
+                    log::error!("[test-k8s] Redis: Connection timed out");
+                    Ok(TestConnectionResult::failure("Redis connection timed out after 10 seconds"))
+                }
             }
         }
-        Err(e) => Ok(TestConnectionResult::failure(e.to_string())),
+        Err(e) => {
+            log::error!("[test-k8s] Redis: Failed to create client: {}", e);
+            Ok(TestConnectionResult::failure(e.to_string()))
+        }
     }
 }

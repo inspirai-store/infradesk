@@ -974,8 +974,9 @@ class HttpSettingsApi implements ISettingsApi {
 
   async get(key: string): Promise<unknown | null> {
     try {
-      const response = await api.get<{ value: unknown }>(`/settings/${encodeURIComponent(key)}`)
-      return response.data.value
+      // Backend returns the value directly (e.g., { "mysql": 15, ... } or null)
+      const response = await api.get<unknown>(`/settings/${encodeURIComponent(key)}`)
+      return response.data
     } catch {
       return null
     }
@@ -1039,8 +1040,9 @@ class HttpLLMConfigApi implements ILLMConfigApi {
 
   async getApiKey(id: number): Promise<string | null> {
     try {
-      const response = await api.get<{ api_key: string | null }>(`/llm-configs/${id}/api-key`)
-      return response.data.api_key
+      // Backend returns Option<String> directly, not wrapped in object
+      const response = await api.get<string | null>(`/llm-configs/${id}/api-key`)
+      return response.data
     } catch {
       return null
     }

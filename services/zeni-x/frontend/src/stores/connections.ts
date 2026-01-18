@@ -18,6 +18,8 @@ export const useConnectionsStore = defineStore('connections', () => {
   const loading = ref(false)
   const error = ref<string | null>(null)
   const initialized = ref(false)
+  // Track if active connections were loaded from backend (to prevent auto-select override)
+  const activeConnectionsLoadedFromBackend = ref(false)
 
   // Getters
   const mysqlConnections = computed(() =>
@@ -58,15 +60,38 @@ export const useConnectionsStore = defineStore('connections', () => {
       // Ensure we always have an array
       connections.value = Array.isArray(data) ? data : []
 
-      // Auto-select default connections or first available for each type
-      for (const type of ['mysql', 'redis', 'mongodb', 'minio']) {
-        if (!activeConnections.value[type]) {
-          const typeConnections = getConnectionsByType(type)
-          const defaultConn = typeConnections.find(c => c.is_default)
-          if (defaultConn && defaultConn.id) {
-            setActiveConnection(type, defaultConn.id)
-          } else if (typeConnections.length > 0 && typeConnections[0].id) {
-            setActiveConnection(type, typeConnections[0].id)
+      // Only auto-select if we didn't load settings from backend
+      // This prevents overriding user's saved preferences
+      if (!activeConnectionsLoadedFromBackend.value) {
+        for (const type of ['mysql', 'redis', 'mongodb', 'minio']) {
+          if (!activeConnections.value[type]) {
+            const typeConnections = getConnectionsByType(type)
+            const defaultConn = typeConnections.find(c => c.is_default)
+            if (defaultConn && defaultConn.id) {
+              setActiveConnection(type, defaultConn.id)
+            } else if (typeConnections.length > 0 && typeConnections[0].id) {
+              setActiveConnection(type, typeConnections[0].id)
+            }
+          }
+        }
+      } else {
+        // Validate that saved active connections still exist
+        for (const type of ['mysql', 'redis', 'mongodb', 'minio']) {
+          const savedId = activeConnections.value[type]
+          if (savedId !== null) {
+            const exists = connections.value.some(c => c.id === savedId && c.type === type)
+            if (!exists) {
+              // Saved connection no longer exists, clear it and auto-select
+              const typeConnections = getConnectionsByType(type)
+              const defaultConn = typeConnections.find(c => c.is_default)
+              if (defaultConn && defaultConn.id) {
+                setActiveConnection(type, defaultConn.id)
+              } else if (typeConnections.length > 0 && typeConnections[0].id) {
+                setActiveConnection(type, typeConnections[0].id)
+              } else {
+                setActiveConnection(type, null)
+              }
+            }
           }
         }
       }
@@ -174,11 +199,17 @@ export const useConnectionsStore = defineStore('connections', () => {
       const saved = await api.settings.get(ACTIVE_CONNECTIONS_KEY)
       if (saved && typeof saved === 'object') {
         const parsed = saved as Record<string, number | null>
+        let hasAnyValue = false
         for (const [type, id] of Object.entries(parsed)) {
           if (typeof id === 'number') {
             activeConnections.value[type] = id
             setActiveConnectionId(type, id)
+            hasAnyValue = true
           }
+        }
+        // Mark that we loaded settings from backend
+        if (hasAnyValue) {
+          activeConnectionsLoadedFromBackend.value = true
         }
       }
     } catch (e) {
@@ -233,11 +264,20 @@ export const useConnectionsStore = defineStore('connections', () => {
     saveActiveConnections()
   }
 
-  // Initialize: load from backend settings
-  loadActiveConnections().then(() => {
-    // Also check localStorage for migration
+  // Initialize store: load settings from backend, then fetch connections
+  // This ensures proper order: settings first, then connections
+  async function initialize(): Promise<void> {
+    if (initialized.value) return
+
+    // 1. First load active connections from backend settings
+    await loadActiveConnections()
+
+    // 2. Check localStorage for migration (legacy support)
     initFromStorage()
-  })
+
+    // 3. Then fetch connections list
+    await fetchConnections()
+  }
 
   return {
     // State
@@ -267,6 +307,9 @@ export const useConnectionsStore = defineStore('connections', () => {
     setActiveConnection,
     loadActiveConnections,
     saveActiveConnections,
+
+    // Initialization
+    initialize,
 
     // Legacy compatibility (deprecated)
     initFromStorage,
