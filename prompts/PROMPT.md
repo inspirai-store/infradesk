@@ -1,6 +1,6 @@
-# Task: Convert Zeni-X Web App to Cross-Platform Desktop Application with Tauri
+# Task: Convert InfraDesk Web App to Cross-Platform Desktop Application with Tauri
 
-Transform the Zeni-X database management platform from a Web application + K8s deployment architecture to a cross-platform desktop application using Tauri 2.0 framework (Rust + Vue 3), following TDD development practices throughout.
+Transform the InfraDesk database management platform from a Web application + K8s deployment architecture to a cross-platform desktop application using Tauri 2.0 framework (Rust + Vue 3), following TDD development practices throughout.
 
 ## Requirements
 
@@ -120,7 +120,7 @@ Frontend (WebView) -> Tauri IPC (invoke) -> Rust Backend
 ### Directory Structure
 
 ```
-zeni-x/
+infradesk/
 ├── src-tauri/                    # Tauri Rust backend
 │   ├── src/
 │   │   ├── commands/             # Tauri commands (mysql, redis, connection, storage)
@@ -128,7 +128,7 @@ zeni-x/
 │   │   ├── models/               # Data models
 │   │   └── utils/                # Utilities (error, crypto, keychain)
 │   └── icons/                    # Application icons
-├── services/zeni-x/frontend/     # Frontend (mostly reused)
+├── services/infradesk/frontend/  # Frontend (mostly reused)
 │   ├── src/
 │   │   ├── api/
 │   │   │   └── tauri-adapter.ts  # NEW: Tauri IPC adapter

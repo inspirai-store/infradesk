@@ -1,22 +1,22 @@
 [package]
-name = "zeni-x"
+name = "infradesk"
 version = "1.0.4"
-description = "Zeni-X Database Management Platform"
-authors = ["Zeni-X Team"]
+description = "InfraDesk Database Management Platform"
+authors = ["InfraDesk Team"]
 license = "MIT"
 repository = ""
 edition = "2021"
 rust-version = "1.77.2"
-default-run = "zeni-x"
+default-run = "infradesk"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [lib]
-name = "zeni_x_lib"
+name = "infradesk_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "zeni-x"
+name = "infradesk"
 path = "src/main.rs"
 
 [[bin]]

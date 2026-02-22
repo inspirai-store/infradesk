@@ -1,18 +1,18 @@
 {
   "$schema": "./node_modules/@tauri-apps/cli/config.schema.json",
-  "productName": "Zeni-X",
+  "productName": "InfraDesk",
   "version": "1.0.4",
-  "identifier": "com.zenix.database",
+  "identifier": "com.infradesk.app",
   "build": {
-    "frontendDist": "../services/zeni-x/frontend/dist",
+    "frontendDist": "../services/infradesk/frontend/dist",
     "devUrl": "http://localhost:15073",
-    "beforeDevCommand": "pnpm --dir services/zeni-x/frontend dev",
-    "beforeBuildCommand": "pnpm --dir services/zeni-x/frontend build"
+    "beforeDevCommand": "pnpm --dir services/infradesk/frontend dev",
+    "beforeBuildCommand": "pnpm --dir services/infradesk/frontend build"
   },
   "app": {
     "windows": [
       {
-        "title": "Zeni-X Database Manager",
+        "title": "InfraDesk",
         "width": 1280,
         "height": 800,
         "minWidth": 800,

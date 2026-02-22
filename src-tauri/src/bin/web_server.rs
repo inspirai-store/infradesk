@@ -5,23 +5,23 @@
 
 use std::path::PathBuf;
 
-use zeni_x_lib::db::SqlitePool;
-use zeni_x_lib::http::create_router;
-use zeni_x_lib::services::PortForwardService;
+use infradesk_lib::db::SqlitePool;
+use infradesk_lib::http::create_router;
+use infradesk_lib::services::PortForwardService;
 
 fn get_db_path() -> PathBuf {
     // Use the same path as Tauri would use
     let home = dirs::home_dir().expect("Failed to get home directory");
     let app_data_dir = if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/com.zenix.database")
+        home.join("Library/Application Support/com.infradesk.app")
     } else if cfg!(target_os = "windows") {
-        home.join("AppData/Roaming/com.zenix.database")
+        home.join("AppData/Roaming/com.infradesk.app")
     } else {
-        home.join(".local/share/com.zenix.database")
+        home.join(".local/share/com.infradesk.app")
     };
 
     std::fs::create_dir_all(&app_data_dir).expect("Failed to create app data directory");
-    app_data_dir.join("zeni-x.db")
+    app_data_dir.join("infradesk.db")
 }
 
 #[tokio::main]
@@ -31,7 +31,7 @@ async fn main() {
         .format_timestamp_millis()
         .init();
 
-    log::info!("Starting Zeni-X Web Server...");
+    log::info!("Starting InfraDesk Web Server...");
 
     // Initialize database
     let db_path = get_db_path();

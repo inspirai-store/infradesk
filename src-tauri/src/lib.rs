@@ -1,6 +1,6 @@
-//! Zeni-X Tauri Backend
+//! InfraDesk Tauri Backend
 //!
-//! This is the Rust backend for the Zeni-X desktop application.
+//! This is the Rust backend for the InfraDesk desktop application.
 //! It provides local database storage and direct database connections.
 
 mod commands;
@@ -27,7 +27,7 @@ fn get_app_data_dir(app: &tauri::App) -> PathBuf {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Check if web debug mode is enabled
-    let is_web_mode = env::var("ZENI_WEB_MODE").is_ok();
+    let is_web_mode = env::var("INFRADESK_WEB_MODE").is_ok();
 
     tauri::Builder::default()
         .setup(move |app| {
@@ -42,7 +42,7 @@ pub fn run() {
 
             // Initialize SQLite database synchronously
             let app_data_dir = get_app_data_dir(app);
-            let db_path = app_data_dir.join("zeni-x.db");
+            let db_path = app_data_dir.join("infradesk.db");
 
             log::info!("Database path: {:?}", db_path);
 
@@ -78,7 +78,7 @@ pub fn run() {
 
                         // Configure window for log viewer mode
                         if let Some(window) = app.get_webview_window("main") {
-                            window.set_title("Zeni-X Log Viewer").ok();
+                            window.set_title("InfraDesk Log Viewer").ok();
                             window.set_size(tauri::LogicalSize::new(700.0, 450.0)).ok();
                             // Navigate to log viewer page
                             // In web mode, Vite uses port 15074 (different from dev mode's 15073)

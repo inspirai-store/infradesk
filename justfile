@@ -1,5 +1,5 @@
-# Zeni-X Development Justfile
-# ============================
+# InfraDesk Development Justfile
+# ==============================
 #
 # Usage:
 #   just dev     - Start Tauri desktop app in development mode (IPC)
@@ -7,7 +7,7 @@
 #   just build   - Build production release
 
 # Directories
-frontend_dir := "services/zeni-x/frontend"
+frontend_dir := "services/infradesk/frontend"
 
 # Show available commands
 default:
@@ -91,7 +91,7 @@ web: _check-deps
     # Step 3: Start frontend Vite dev server with log piping
     echo "[3/3] Starting frontend Vite dev server..."
     export VITE_PORT=15074
-    pnpm --dir services/zeni-x/frontend dev 2>&1 | ./scripts/vite-log-pipe.sh &
+    pnpm --dir services/infradesk/frontend dev 2>&1 | ./scripts/vite-log-pipe.sh &
     FRONTEND_PID=$!
 
     # Wait for Vite to be ready

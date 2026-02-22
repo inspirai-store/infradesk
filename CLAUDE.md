@@ -1,8 +1,8 @@
-# Zeni-X - Database Management Desktop App
+# InfraDesk - Database Management Desktop App
 
 ## Overview
 
-Zeni-X is a cross-platform desktop database management application built with Tauri 2.0.
+InfraDesk is a cross-platform desktop database management application built with Tauri 2.0.
 
 ## Tech Stack
 
@@ -25,14 +25,14 @@ just clean    # Clean build artifacts
 ## Project Structure
 
 ```
-zeni-x/
+infradesk/
 ├── src-tauri/                  # Tauri Rust backend
 │   ├── src/
 │   │   ├── commands/           # Tauri commands (IPC interface)
 │   │   ├── services/           # Business logic
 │   │   └── db/                 # SQLite data layer
 │   └── Cargo.toml
-├── services/zeni-x/frontend/   # Vue frontend
+├── services/infradesk/frontend/   # Vue frontend
 ├── config/env/                 # Environment configuration
 ├── data/                       # Runtime data
 └── archive/                    # Archived content (reference only)

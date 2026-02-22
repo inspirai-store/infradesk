@@ -2155,6 +2155,42 @@ dependencies = [
 ]
 
 [[package]]
+name = "infradesk"
+version = "1.0.4"
+dependencies = [
+ "aes-gcm",
+ "anyhow",
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "csv",
+ "dirs 5.0.1",
+ "env_logger",
+ "futures",
+ "k8s-openapi",
+ "kube",
+ "log",
+ "mockall",
+ "rand 0.8.5",
+ "redis",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "sqlx",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-log",
+ "tauri-plugin-shell",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-stream",
+ "tower-http 0.5.2",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
 name = "inout"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6830,42 +6866,6 @@ dependencies = [
  "quote",
  "syn 2.0.114",
  "synstructure",
-]
-
-[[package]]
-name = "zeni-x"
-version = "1.0.4"
-dependencies = [
- "aes-gcm",
- "anyhow",
- "axum",
- "base64 0.22.1",
- "chrono",
- "csv",
- "dirs 5.0.1",
- "env_logger",
- "futures",
- "k8s-openapi",
- "kube",
- "log",
- "mockall",
- "rand 0.8.5",
- "redis",
- "serde",
- "serde_json",
- "serde_yaml",
- "sqlx",
- "tauri",
- "tauri-build",
- "tauri-plugin-log",
- "tauri-plugin-shell",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tokio-stream",
- "tower-http 0.5.2",
- "urlencoding",
- "uuid",
 ]
 
 [[package]]

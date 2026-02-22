@@ -13,7 +13,7 @@ use crate::error::{AppError, AppResult};
 
 /// Fixed encryption key (in production, this should come from secure storage or be derived)
 /// 32 bytes for AES-256
-const ENCRYPTION_KEY: &[u8; 32] = b"zeni-x-secret-key-2024-secure!@#";
+const ENCRYPTION_KEY: &[u8; 32] = b"infradesk-secret-key-2024-sec!@#";
 
 /// Nonce size for AES-GCM (12 bytes)
 const NONCE_SIZE: usize = 12;

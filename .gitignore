@@ -59,4 +59,4 @@ debug/
 # Helm 敏感配置文件
 *.secret.yaml
 values-*.secret.yaml
-helm/zeni-x/values-*.secret.yaml
+helm/infradesk/values-*.secret.yaml
